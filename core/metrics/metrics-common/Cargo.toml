@@ -1,0 +1,17 @@
+[package]
+name = "glint-metrics-common"
+version = "0.1.0"
+description = "Shared native FPS counter and SHM block for gameoverlay metrics DLLs"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+parking_lot.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    # CreateFileMappingW takes SECURITY_ATTRIBUTES → needs Win32_Security too
+    "Win32_Security",
+    "Win32_System_Memory",
+    "Win32_System_Performance",
+    "Win32_System_Threading",
+] }

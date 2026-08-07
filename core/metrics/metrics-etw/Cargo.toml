@@ -1,0 +1,37 @@
+[package]
+name = "glint-metrics-etw"
+version = "0.1.0"
+description = "ETW-based hardware/display FPS counter (FrameGen aware)"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "glint-metrics-etw"
+path = "src/main.rs"
+
+[lib]
+name = "glint_metrics_etw"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, optional = true }
+ferrisetw.workspace = true
+glint-etw-cleanup = { path = "../etw-cleanup" }
+glint-metrics-common.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_Threading",
+] }
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]

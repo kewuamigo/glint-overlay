@@ -1,0 +1,17 @@
+{
+  "id": "achievements",
+  "name": "Achievements",
+  "version": "1.0.0",
+  "builtin": true,
+  "entry": "./dist/index.js",
+  "permissions": ["db", "storage", "fs:read", "fs:pick", "game:process"],
+  "panels": [
+    {
+      "id": "main",
+      "title": "Achievements",
+      "pinnable": true,
+      "defaultPinned": false,
+      "hudSlot": "bottom-right"
+    }
+  ]
+}

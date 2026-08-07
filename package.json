@@ -1,0 +1,23 @@
+{
+  "name": "glint",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Glint — Windows game overlay with React UI, app SDK, and dual-hook FPS metrics",
+  "type": "module",
+  "scripts": {
+    "pnpm": "npx pnpm@10.12.1",
+    "install:deps": "npx pnpm@10.12.1 install",
+    "build": "npx pnpm@10.12.1 --filter @glint/plugin-sdk --filter @glint/achievements-core --filter @glint/save-manifest --filter @glint/cloud-sync --filter @glint/metrics-app --filter @glint/achievements-app --filter @glint/browser-app --filter @glint/static-server --filter @glint/overlay-bridge --filter @glint/ui --filter @glint/shell --filter @glint/launcher-ui --filter @glint/launcher-electron -r run build",
+    "build:all-workspaces": "npx pnpm@10.12.1 -r build",
+    "build:ui": "cd ui/shell && npx vite build",
+    "dev": "npx pnpm@10.12.1 --filter @glint/shell dev",
+
+    "build:rust": "cargo build --release",
+    "launcher": "cargo run -p glint-launcher --release",
+    "build:all": "npm run build:rust && npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.12.1"
+}

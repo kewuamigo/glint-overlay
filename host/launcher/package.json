@@ -1,0 +1,30 @@
+{
+  "name": "@glint/launcher-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell for the Glint launcher",
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "electron ./dist/main.js",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "test:sync-decision": "tsc && node --test dist/cloud-sync-decision.test.js",
+    "test:appdata-migrate": "tsc && node --test dist/appdata-migrate.test.js"
+  },
+  "dependencies": {
+    "@glint/achievements-core": "workspace:*",
+    "@glint/cloud-sync": "workspace:*",
+    "@glint/save-manifest": "workspace:*",
+    "@glint/static-server": "workspace:*",
+    "better-sqlite3": "^12.11.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.30",
+    "electron": "^40.1.0",
+    "typescript": "^5.8.3"
+  }
+}

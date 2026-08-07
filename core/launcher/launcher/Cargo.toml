@@ -1,0 +1,30 @@
+[package]
+name = "glint-launcher"
+version = "0.1.0"
+description = "GUI launcher to pick a running process and inject the game overlay"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "glint-launcher"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+anyhow.workspace = true
+glint-etw-cleanup = { path = "../../metrics/etw-cleanup" }
+glint-injector = { path = "../../inject/injector" }
+serde.workspace = true
+serde_json.workspace = true
+tracing-subscriber.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+winres = "0.1"

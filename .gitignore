@@ -1,0 +1,28 @@
+node_modules/
+dist/
+target/
+crates/asdf-hook/detours/
+*.log
+.DS_Store
+.env
+.env.local
+pnpm-lock.yaml
+package-lock.json
+.vite/
+*.node
+
+# Scratch / agent temp (do not re-commit)
+tmp-*/
+.tmp/
+.cursor/tmp-*/
+.cursor/tmp-*
+
+# CEF binary distribution (fetch via scripts/fetch-cef.ps1)
+third_party/cef/
+host/cef/build/
+host/native/cef/
+tmp-cef-*.json
+tmp-cef-*.txt
+
+# Public export workdirs
+.tmp-public-export/

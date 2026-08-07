@@ -1,0 +1,18 @@
+services:
+  cloud-sync:
+    build:
+      context: ..
+      dockerfile: cloud-sync-server/Dockerfile
+    ports:
+      - "${CLOUD_SYNC_PORT:-8787}:8787"
+    environment:
+      CLOUD_SYNC_TOKEN: ${CLOUD_SYNC_TOKEN:?Set CLOUD_SYNC_TOKEN in .env or the environment}
+      CLOUD_SYNC_HOST: "0.0.0.0"
+      CLOUD_SYNC_PORT: "8787"
+      CLOUD_SYNC_ROOT: /data
+    volumes:
+      - cloud-sync-data:/data
+    restart: unless-stopped
+
+volumes:
+  cloud-sync-data:

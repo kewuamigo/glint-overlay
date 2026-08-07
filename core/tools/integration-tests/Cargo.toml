@@ -1,0 +1,25 @@
+[package]
+name = "glint-integration-tests"
+version = "0.1.0"
+description = "Integration and dynamic tests (SpinningCube.exe, overlay inject)"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+glint-injector = { path = "../../inject/injector" }
+glint-overlay-client = { workspace = true }
+glint-overlay-event = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+glint-overlay-common = { workspace = true }
+glint-metrics-common = { path = "../../metrics/metrics-common" }

@@ -1,0 +1,21 @@
+{
+  "name": "@glint/save-manifest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc && node scripts/emit-test.mjs",
+    "build:db": "node scripts/build-ludusavi-db.mjs",
+    "test": "npm run build && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@glint/plugin-sdk": "workspace:*",
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "typescript": "^5.8.3"
+  }
+}

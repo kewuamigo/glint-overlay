@@ -1,0 +1,26 @@
+{
+  "name": "@glint/cloud-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/emit-test.mjs",
+    "test": "npm run build && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "basic-ftp": "^5.0.5",
+    "tar": "7.5.22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "typescript": "^5.8.3"
+  }
+}

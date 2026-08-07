@@ -1,0 +1,17 @@
+{
+  "id": "metrics",
+  "name": "Metrics",
+  "version": "1.0.0",
+  "builtin": true,
+  "entry": "./dist/index.js",
+  "permissions": ["metrics"],
+  "panels": [
+    {
+      "id": "main",
+      "title": "Metrics",
+      "pinnable": true,
+      "defaultPinned": true,
+      "hudSlot": "top-left"
+    }
+  ]
+}

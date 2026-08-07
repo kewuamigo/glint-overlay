@@ -1,0 +1,16 @@
+[package]
+name = "glint-cef-protocol"
+description = "Host ↔ CEF Protobuf IPC schema (MSG_PROTO Envelope)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+prost = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }

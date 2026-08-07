@@ -1,0 +1,21 @@
+[package]
+name = "glint-overlay-common"
+description = "Glint IPC messages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+glint-overlay-event = { workspace = true, features = ["bincode"] }
+tokio = { workspace = true, features = ["io-util", "rt", "sync", "net"] }
+
+bincode = { version = "2.0.1", features = ["derive"] }
+derive_more = { version = "2", features = ["debug", "from"] }
+num-derive = "0.4.2"
+num-traits = "0.2.19"
+
+[package.metadata.cargo-machete]
+ignored = ["num-traits"]

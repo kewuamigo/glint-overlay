@@ -1,0 +1,55 @@
+[package]
+name = "glint-overlay-client"
+description = "Glint IPC client and injector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = false
+
+[features]
+default = ["surface"]
+surface = ["dep:windows"]
+
+[dependencies]
+glint-overlay-common = { workspace = true }
+glint-overlay-event = { workspace = true, features = ["bincode"] }
+tokio = { workspace = true, features = ["macros", "time", "net"] }
+
+bincode = "2.0.1"
+scc = "3.3.3"
+ntapi = "0.4.1"
+anyhow = "1.0.97"
+scopeguard = "1.2.0"
+bytemuck = "1.23.1"
+goblin = { version = "0.10.0", default-features = false, features = [
+    "std",
+    "pe32",
+    "pe64",
+] }
+
+[dependencies.windows]
+workspace = true
+optional = true
+features = [
+    "Win32_Foundation",
+    "Wdk_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_System_ProcessStatus",
+    "Win32_Security_Authorization",
+    "Win32_System_SystemServices",
+    "Win32_System_SystemInformation",
+    "Win32_System_Memory",
+    "Win32_Graphics",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]

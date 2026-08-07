@@ -1,0 +1,9 @@
+[package]
+name = "glint-etw-cleanup"
+version = "0.1.0"
+description = "Stop orphaned Glint ETW trace sessions and helper processes"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing.workspace = true

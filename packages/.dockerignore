@@ -1,0 +1,6 @@
+**/node_modules
+**/dist
+**/test
+**/*.test.ts
+**/*.test.js
+**/cloud-sync-data

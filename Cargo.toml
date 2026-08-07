@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "core/inject/injector",
+    "core/launcher/launcher",
+    "core/metrics/metrics-common",
+    "core/metrics/metrics-native",
+    "core/metrics/metrics-etw",
+    "core/metrics/etw-cleanup",
+    "core/overlay/gpu-texture",
+    "core/overlay/overlay-client",
+    "core/overlay/overlay-common",
+    "core/overlay/overlay-event",
+    "core/overlay/overlay-hook",
+    "core/overlay/overlay-core",
+    "core/overlay/overlay-dll",
+    "core/overlay/overlay-vulkan-layer",
+    "core/overlay/browser-host",
+    "core/overlay/cef-protocol",
+    "core/tools/integration-tests",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+version = "0.1.0"
+repository = "https://github.com/kewu/gameoverlay"
+authors = ["Glint Contributors"]
+
+[workspace.dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+windows = "0.62"
+glint-cef-protocol = { path = "core/overlay/cef-protocol" }
+glint-overlay-client = { path = "core/overlay/overlay-client" }
+glint-overlay-common = { path = "core/overlay/overlay-common" }
+glint-overlay-event = { path = "core/overlay/overlay-event" }
+glint-overlay-hook = { path = "core/overlay/overlay-hook" }
+glint-overlay-core = { path = "core/overlay/overlay-core" }
+glint-overlay-dll = { path = "core/overlay/overlay-dll" }
+glint-overlay-vulkan-layer = { path = "core/overlay/overlay-vulkan-layer" }
+glint-metrics-common = { path = "core/metrics/metrics-common" }
+ferrisetw = "1.2"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+prost = "0.13"
+prost-build = "0.13"
+protoc-bin-vendored = "3"
+clap = { version = "4", features = ["derive"] }
+mimalloc = "0.1.46"
+futures = "0.3.31"
+num = "0.4.3"
+once_cell = "1.21.3"
+bytemuck = "1.23.1"
+static_vcruntime = "3"

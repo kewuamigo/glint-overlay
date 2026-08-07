@@ -1,0 +1,341 @@
+@import '@glint/ui/tokens.css';
+
+.ach-root {
+  --ach-panel: var(--bg-panel);
+  --ach-border: var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 16px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ach-root *,
+.ach-root *::before,
+.ach-root *::after {
+  box-sizing: border-box;
+}
+
+.ach-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.ach-eyebrow {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+.ach-header h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.ach-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ach-btn {
+  border: 1px solid var(--ach-border);
+  background: rgba(20, 24, 34, 0.95);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ach-btn:hover:not(:disabled) {
+  border-color: rgba(125, 211, 252, 0.45);
+  background: rgba(125, 211, 252, 0.08);
+}
+
+.ach-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ach-status {
+  margin: 0;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--online);
+}
+
+.ach-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 28px 18px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--ach-border);
+  background: var(--ach-panel);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ach-showcase {
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  border-radius: 16px;
+  min-height: 132px;
+  border: 1px solid var(--ach-border);
+}
+
+.ach-showcase-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(5, 6, 7, 0.88), rgba(5, 6, 7, 0.42));
+  pointer-events: none;
+}
+
+.ach-showcase-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  min-height: 132px;
+}
+
+.ach-showcase-body h3 {
+  margin: 6px 0 4px;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.ach-showcase-body p {
+  margin: 0 0 10px;
+  color: rgba(244, 246, 250, 0.72);
+  font-size: 13px;
+}
+
+.ach-pill {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--cyan);
+  background: rgba(125, 211, 252, 0.12);
+  border: 1px solid rgba(125, 211, 252, 0.28);
+}
+
+.ach-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.ach-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), var(--online));
+  transition: width 0.45s ease;
+}
+
+.ach-progress-ring {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.ach-progress-ring svg {
+  display: block;
+}
+
+.ach-progress-ring-track {
+  stroke: rgba(255, 255, 255, 0.12);
+}
+
+.ach-progress-ring-value {
+  stroke: var(--cyan);
+  transition: stroke-dashoffset 0.45s ease;
+}
+
+.ach-progress-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.ach-progress-ring-label strong {
+  font-size: 14px;
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ach-progress-ring-label span {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ach-trophy-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  align-content: start;
+  padding-right: 2px;
+}
+
+.ach-trophy-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ach-trophy-grid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.ach-trophy-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  align-items: flex-start;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--ach-border);
+  background: var(--ach-panel);
+  transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.ach-trophy-card:hover {
+  transform: translateY(-2px);
+}
+
+.ach-trophy-card.on {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+.ach-trophy-card.on:hover {
+  border-color: rgba(52, 211, 153, 0.48);
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.ach-trophy-card.locked {
+  background: rgba(8, 10, 14, 0.92);
+  border-color: rgba(255, 255, 255, 0.06);
+  filter: grayscale(1) brightness(0.55);
+}
+
+.ach-trophy-card.locked:hover {
+  filter: grayscale(0.85) brightness(0.62);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.ach-trophy-card.locked strong,
+.ach-trophy-card.locked p {
+  color: rgba(244, 246, 250, 0.45);
+}
+
+.ach-trophy-card img,
+.ach-dot {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ach-dot {
+  background: linear-gradient(160deg, #3a4558, #1a2030);
+}
+
+.ach-trophy-card.locked img,
+.ach-trophy-card.locked .ach-dot {
+  filter: brightness(0.75);
+}
+
+.ach-trophy-card strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 3px;
+  font-family: var(--font-display);
+}
+
+.ach-trophy-card p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.ach-trophy-card em {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 10px;
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: rgba(244, 246, 250, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ach-trophy-card.on em {
+  color: #042f1e;
+  background: rgba(52, 211, 153, 0.9);
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.ach-hud {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--ach-border);
+  font-size: 12px;
+}
+
+.ach-hud strong {
+  font-family: var(--font-display);
+}
+
+.ach-hud span {
+  color: var(--text-muted);
+}

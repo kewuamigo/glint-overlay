@@ -1,0 +1,41 @@
+const React = globalThis.__goSharedReact;
+if (!React) {
+  throw new Error('Shared React not initialized — load overlay UI before plugins');
+}
+export default React;
+export const {
+  Children,
+  Component,
+  Fragment,
+  Profiler,
+  PureComponent,
+  StrictMode,
+  Suspense,
+  cloneElement,
+  createContext,
+  createElement,
+  createFactory,
+  createRef,
+  forwardRef,
+  isValidElement,
+  lazy,
+  memo,
+  startTransition,
+  unstable_act,
+  useCallback,
+  useContext,
+  useDebugValue,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useInsertionEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+  version,
+} = React;

@@ -1,0 +1,17 @@
+[package]
+name = "glint-overlay-hook"
+description = "Glint graphics API hooks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = false
+
+[dependencies]
+tracing = "0.1"
+
+[build-dependencies]
+anyhow = "1.0.97"
+cc = "1.2.18"

@@ -1,0 +1,28 @@
+{
+  "name": "@glint/overlay-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./channels": {
+      "require": "./dist/channels.cjs"
+    },
+    "./host-client": {
+      "types": "./dist/host-client.d.ts",
+      "import": "./dist/host-client.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/emit-channels-cjs.mjs",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "browser",
+  "name": "Browser",
+  "version": "1.0.0",
+  "builtin": true,
+  "privileged": true,
+  "entry": "./dist/index.js",
+  "permissions": [],
+  "panels": [
+    {
+      "id": "main",
+      "title": "Browser",
+      "pinnable": false,
+      "defaultPinned": false
+    }
+  ]
+}

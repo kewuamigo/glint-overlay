@@ -1,0 +1,27 @@
+[package]
+name = "glint-gpu-texture"
+version = "0.1.0"
+description = "D3D11 NT shared texture uploader for overlay-host updateShtex"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "glint-gpu-texture"
+path = "src/main.rs"
+
+[lib]
+name = "glint_gpu_texture"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+scopeguard = "1"
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    # IDXGIResource1::CreateSharedHandle takes SECURITY_ATTRIBUTES
+    "Win32_Security",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }

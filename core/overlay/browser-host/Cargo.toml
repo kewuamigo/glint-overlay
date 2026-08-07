@@ -1,0 +1,43 @@
+[package]
+name = "glint-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = false
+
+[[bin]]
+name = "glint-browser"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+num = { workspace = true }
+ureq = "2"
+glint-cef-protocol.workspace = true
+glint-overlay-client = { workspace = true, features = ["surface"] }
+glint-overlay-common.workspace = true
+glint-overlay-event.workspace = true
+glint-metrics-common.workspace = true
+glint-gpu-texture = { path = "../gpu-texture" }
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+]

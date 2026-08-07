@@ -1,0 +1,15 @@
+:root {
+  --bg-deep: #050607;
+  --bg-elevated: rgba(12, 14, 18, 0.92);
+  --bg-panel: rgba(16, 18, 24, 0.92);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --text: #f4f6fa;
+  --text-muted: #8b93a7;
+  --accent: #e8eef8;
+  --cyan: #7dd3fc;
+  --online: #34d399;
+  --radius: 18px;
+  --radius-sm: 12px;
+  --font-display: 'Sora', 'DM Sans', sans-serif;
+  --font-ui: 'DM Sans', sans-serif;
+}

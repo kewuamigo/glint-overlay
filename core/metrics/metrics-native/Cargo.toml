@@ -1,0 +1,26 @@
+[package]
+name = "glint-metrics-native"
+version = "0.1.0"
+description = "In-DLL native Present hook counter for game overlay"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "glint_metrics_native"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "glint-metrics-reader"
+path = "src/bin/reader.rs"
+
+[dependencies]
+glint-gpu-texture = { path = "../../overlay/gpu-texture" }
+glint-metrics-common.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+minhook-sys = "0.1.1"
