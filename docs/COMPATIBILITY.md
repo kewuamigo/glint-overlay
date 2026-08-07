@@ -15,3 +15,5 @@ and [session-ownership](../specs/002-cef-overlay-host/contracts/session-ownershi
 Best-effort only. Kernel anti-cheat or protected titles may block injection or
 overlay compositing. Run the launcher as Administrator when attach fails on
 otherwise supported samples. Honest “unsupported” notes beat silent failure.
+
+If attach fails on a title that should work, open an issue with OS build, GPU API, and game name.
