@@ -1,15 +1,41 @@
 name: Release
 
+# OTA-aware release pipeline for kewuamigo/glint-overlay.
+#
+# The Windows launcher checks
+#   https://api.github.com/repos/kewuamigo/glint-overlay/releases/latest
+# and applies the update when the latest tag is a higher semver than the
+# installed version.json. Assets must be named exactly:
+#   Glint-Setup-<version>.exe            (Inno Setup installer, auto-applied)
+#   Glint-Setup-<version>.exe.sha256     (checksum sidecar)
+#   Glint-portable-<version>.zip         (portable, opens the release page)
+#
+# Two triggers:
+#   1. workflow_dispatch — picks the next version automatically by bumping the
+#      latest v* tag (patch by default, minor/major selectable). The tag is
+#      created and pushed here, then built and published.
+#   2. push of an existing v* tag (manual tag/release already made elsewhere).
+
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version without v prefix (e.g. 0.1.0)"
-        required: true
-        type: string
+      bump:
+        description: "Which component to auto-increment"
+        required: false
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      prerelease:
+        description: "Mark the release as pre-release (OTA ignores these by default)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -17,21 +43,65 @@ permissions:
 jobs:
   windows-installer:
     runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Resolve version
+      - name: Resolve version (auto-increment)
         id: ver
         shell: pwsh
+        env:
+          REPO: ${{ github.repository }}
         run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $v = "${{ inputs.version }}".TrimStart("v")
-          } else {
-            $v = "${{ github.ref_name }}".TrimStart("v")
+          $ErrorActionPreference = "Stop"
+
+          function Get-LatestVersion {
+            $tags = gh api "repos/$env:REPO/tags" --paginate --jq '.[].name' |
+              Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
+            $latest = $tags |
+              ForEach-Object { $_.TrimStart('v') } |
+              Sort-Object -Property @{ Expression = { [version]::$_ } } |
+              Select-Object -Last 1
+            if (-not ($latest -is [string]) -or $latest.Length -le 0) { $latest = '' }
+            $latest
           }
+
+          if ("${{ github.event_name }}" -eq "push") {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $latest = Get-LatestVersion
+            if ($latest) {
+              Write-Host "Latest release: v$latest"
+              $sem = [version]$latest
+            } else {
+              Write-Host "No previous release found - starting at v0.1.0"
+              $sem = [version]'0.1.0'
+            }
+            switch ("${{ inputs.bump }}") {
+              "major" { $next = [version]::new($sem.Major + 1, 0, 0) }
+              "minor" { $next = [version]::new($sem.Major, $sem.Minor + 1, 0) }
+              default { $next = [version]::new($sem.Major, $sem.Minor, $sem.Build + 1) }
+            }
+            $v = $next.ToString()
+          }
+
+          if ($v -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Resolved version is not semver: $v"
+          }
+
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "v$v" -m "Glint v$v"
+            git push origin "v$v"
+          }
+
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "version=$v"
+          Write-Host "version=$v" -ForegroundColor Green
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -45,6 +115,9 @@ jobs:
         shell: pwsh
         run: choco install innosetup -y --no-progress
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Package release
         shell: pwsh
         run: |
@@ -55,6 +128,7 @@ jobs:
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: Glint v${{ steps.ver.outputs.version }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
           generate_release_notes: true
           files: |
             dist/release/Glint-Setup-${{ steps.ver.outputs.version }}.exe
