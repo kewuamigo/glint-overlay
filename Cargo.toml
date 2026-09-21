@@ -7,6 +7,7 @@ members = [
     "core/metrics/metrics-native",
     "core/metrics/metrics-etw",
     "core/metrics/etw-cleanup",
+    "core/overlay/achievements-native",
     "core/overlay/gpu-texture",
     "core/overlay/overlay-client",
     "core/overlay/overlay-common",

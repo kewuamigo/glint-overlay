@@ -6,7 +6,7 @@ pub mod hook;
 pub mod sl_hook;
 
 pub use glint_metrics_common::{
-    counter, now_ms, read_metrics_for_pid, MetricsBlock, SharedMetrics,
+    MetricsBlock, SharedMetrics, counter, now_ms, read_metrics_for_pid,
 };
 
 use std::sync::atomic::Ordering;
@@ -55,8 +55,6 @@ fn start_worker_thread() {
             if let Some(shm) = SharedMetrics::instance() {
                 shm.set_fg_kind(fg_detect::detect_fg_kind());
             }
-            // Streamline loads lazily; hook its frame token as soon as it appears
-            // to measure the true game-engine rate under DLSS-FG.
             sl_hook::try_install();
             // EOSSDK may load after the game boots — retry until hooked.
             eos_hook::try_install();

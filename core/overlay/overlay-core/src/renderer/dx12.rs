@@ -1,11 +1,11 @@
 mod sync;
 
 use anyhow::Context;
-use glint_overlay_common::request::UpdateSharedHandle;
 use core::{
     mem::ManuallyDrop,
     slice::{self},
 };
+use glint_overlay_common::request::UpdateSharedHandle;
 use std::collections::HashMap;
 use sync::RendererFence;
 use windows::{
@@ -13,17 +13,40 @@ use windows::{
         Foundation::{HANDLE, RECT},
         Graphics::{
             Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            Direct3D11::ID3D11Device,
             Direct3D12::*,
-            Dxgi::{Common::DXGI_SAMPLE_DESC, IDXGISwapChain, IDXGISwapChain3},
+            Dxgi::{
+                Common::{DXGI_FORMAT, DXGI_SAMPLE_DESC},
+                IDXGIKeyedMutex, IDXGISwapChain, IDXGISwapChain3,
+            },
         },
     },
-    core::BOOL,
+    core::{BOOL, Interface},
 };
 
 use crate::{
-    hook::util::original_execute_command_lists, renderer::dx::shaders,
-    texture::OverlayTextureState, util::wrap_com_manually_drop,
+    hook::util::original_execute_command_lists,
+    renderer::{dx::shaders, hdr::OverlayBlitColorSpace},
+    texture::OverlayTextureState,
+    util::{MailboxSample, mailbox_sample, with_keyed_mutex_sampled, wrap_com_manually_drop},
 };
+
+/// DX12 blit source after AcquireSync(0) on the interop keyed mutex.
+/// Lock → shared + last-good snapshot. Miss+cache → last-good. Miss+no cache → skip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dx12MailboxAction {
+    Skip,
+    DrawLastGood,
+    DrawSharedAndSnapshot,
+}
+
+fn dx12_mailbox_action(lock_held: bool, has_cache: bool) -> Dx12MailboxAction {
+    match mailbox_sample(lock_held, has_cache) {
+        MailboxSample::Skip => Dx12MailboxAction::Skip,
+        MailboxSample::Cache => Dx12MailboxAction::DrawLastGood,
+        MailboxSample::Live => Dx12MailboxAction::DrawSharedAndSnapshot,
+    }
+}
 
 const RENDER_TARGET_BLEND_DESC: D3D12_RENDER_TARGET_BLEND_DESC = D3D12_RENDER_TARGET_BLEND_DESC {
     BlendEnable: BOOL(1),
@@ -115,18 +138,48 @@ const MAX_RENDER_TARGETS: usize = D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT as _;
 /// One SRV slot per DXGI overlay layer (0 = Electron, 1+ = CEF, …).
 const MAX_LAYER_SRVS: u32 = 8;
 
+struct Dx12Tex {
+    resource: ID3D12Resource,
+    lock: Dx12Lock,
+    /// Explicit PSR after a Live copy+Draw. Does not decay; next copy needs PSR → COPY_SOURCE.
+    left_in_psr: bool,
+}
+
+#[derive(Clone)]
+enum Dx12Lock {
+    /// Mailbox NT handle could not be opened on `RenderData.interop`.
+    InteropFailed,
+    NoMutex,
+    Mutex(IDXGIKeyedMutex),
+}
+
+struct LastGood {
+    resource: ID3D12Resource,
+    width: u64,
+    height: u32,
+    format: DXGI_FORMAT,
+    srv_ready: bool,
+}
+
 pub struct Dx12Renderer {
     sig: ID3D12RootSignature,
 
     /// Alpha blend over the game (L0 Electron and L1 CEF with transparent outside).
     pipeline: ID3D12PipelineState,
+    pipeline_scrgb: ID3D12PipelineState,
+    pipeline_pq: ID3D12PipelineState,
     /// Per-layer shared-texture cache (update only when handle changes).
-    textures: HashMap<u32, OverlayTextureState<ID3D12Resource>>,
+    textures: HashMap<u32, OverlayTextureState<Dx12Tex>>,
+    /// Private D3D12 snapshot; CopyResource while the interop mutex is held.
+    last_good: HashMap<u32, LastGood>,
     texture_descriptor: ID3D12DescriptorHeap,
     srv_descriptor_size: usize,
 
     command_list: [(ID3D12GraphicsCommandList, ID3D12CommandAllocator); MAX_RENDER_TARGETS],
     fence: RendererFence,
+    /// Open command list for this Present (`backbuffer_index`, resource). One Execute/Signal for all layers.
+    recording: Option<(u32, ID3D12Resource)>,
+    bb_state: [u32; MAX_RENDER_TARGETS],
 }
 
 impl Dx12Renderer {
@@ -170,8 +223,16 @@ impl Dx12Renderer {
             };
             pipeline_desc.RTVFormats[0] = swapchain_desc.BufferDesc.Format;
 
-            let pipeline =
-                device.CreateGraphicsPipelineState::<ID3D12PipelineState>(&pipeline_desc)?;
+            let mut make_pso = |ps: &[u8]| -> anyhow::Result<ID3D12PipelineState> {
+                pipeline_desc.PS = D3D12_SHADER_BYTECODE {
+                    pShaderBytecode: ps.as_ptr().cast(),
+                    BytecodeLength: ps.len(),
+                };
+                Ok(device.CreateGraphicsPipelineState::<ID3D12PipelineState>(&pipeline_desc)?)
+            };
+            let pipeline = make_pso(shaders::PIXEL_SHADER)?;
+            let pipeline_scrgb = make_pso(shaders::PIXEL_SHADER_SCRGB)?;
+            let pipeline_pq = make_pso(shaders::PIXEL_SHADER_PQ)?;
 
             let command_list = array_util::try_from_fn(|_| {
                 let command_alloc = device.CreateCommandAllocator::<ID3D12CommandAllocator>(
@@ -205,20 +266,28 @@ impl Dx12Renderer {
                 sig,
 
                 pipeline,
+                pipeline_scrgb,
+                pipeline_pq,
                 textures: HashMap::new(),
+                last_good: HashMap::new(),
                 texture_descriptor,
                 srv_descriptor_size,
 
                 command_list,
                 fence: RendererFence::new(device)?,
+                recording: None,
+                bb_state: [0; MAX_RENDER_TARGETS],
             })
         }
     }
 
     pub fn update_texture(&mut self, layer: u32, shared: UpdateSharedHandle) {
-        _ = self.fence.wait_pending();
+        if self.fence.wait_pending().is_err() {
+            return;
+        }
         if shared.handle.is_none() {
             self.textures.remove(&layer);
+            self.last_good.remove(&layer);
             return;
         }
         self.textures.entry(layer).or_default().update(shared);
@@ -229,77 +298,37 @@ impl Dx12Renderer {
     pub fn draw(
         &mut self,
         device: &ID3D12Device,
+        interop: &ID3D11Device,
         swapchain: &IDXGISwapChain3,
         backbuffer_index: u32,
         render_target: D3D12_CPU_DESCRIPTOR_HANDLE,
-        queue: &ID3D12CommandQueue,
         layer: u32,
         position: (i32, i32),
         size: (u32, u32),
         screen: (u32, u32),
+        color_space: OverlayBlitColorSpace,
     ) -> anyhow::Result<()> {
         if screen.0 == 0 || screen.1 == 0 {
             return Ok(());
         }
 
-        // Shared command allocator per backbuffer — wait before Reset while a prior
-        // layer/frame execute may still be in flight. (Per-layer SRV slots below
-        // already stop the Electron/CEF texture crosstalk.)
-        self.fence.wait_pending()?;
-
-        let Some(texture) = self.textures.entry(layer).or_default().get_or_create(|handle| {
-            let mut texture = None;
-            unsafe {
-                device.OpenSharedHandle::<ID3D12Resource>(
-                    HANDLE(handle.get() as _),
-                    &mut texture,
-                )?;
-            }
-            let texture = texture.context("cannot open shared texture")?;
-
-            let desc = unsafe { texture.GetDesc() };
-            if desc.Width == 0 || desc.Height == 0 {
-                return Ok(None);
-            }
-
-            Ok(Some(texture))
-        })? else {
-            return Ok(());
-        };
-
-        let slot = (layer.min(MAX_LAYER_SRVS - 1)) as usize;
-        let (cpu_srv, gpu_srv) = unsafe {
-            let cpu = self.texture_descriptor.GetCPUDescriptorHandleForHeapStart();
-            let gpu = self.texture_descriptor.GetGPUDescriptorHandleForHeapStart();
-            (
-                D3D12_CPU_DESCRIPTOR_HANDLE {
-                    ptr: cpu.ptr + self.srv_descriptor_size * slot,
-                },
-                D3D12_GPU_DESCRIPTOR_HANDLE {
-                    ptr: gpu.ptr + (self.srv_descriptor_size * slot) as u64,
-                },
-            )
-        };
-
-        let desc = unsafe { texture.GetDesc() };
-        unsafe {
-            device.CreateShaderResourceView(
-                &*texture,
-                Some(&D3D12_SHADER_RESOURCE_VIEW_DESC {
-                    Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
-                    Format: desc.Format,
-                    ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
-                    Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
-                        Texture2D: D3D12_TEX2D_SRV {
-                            MipLevels: 1,
-                            ..Default::default()
-                        },
-                    },
-                }),
-                cpu_srv,
-            );
+        if self.recording.is_none() {
+            self.fence.wait_pending()?;
         }
 
+        let (shared, lock) = {
+            let Some(tex) = self
+                .textures
+                .entry(layer)
+                .or_default()
+                .get_or_create(|handle| open_shared(device, interop, handle))?
+            else {
+                return Ok(());
+            };
+            (tex.resource.clone(), tex.lock.clone())
+        };
+
+        let has_cache = self.last_good.contains_key(&layer);
         let rect: [f32; 4] = [
             (position.0 as f32 / screen.0 as f32) * 2.0 - 1.0,
             -(position.1 as f32 / screen.1 as f32) * 2.0 + 1.0,
@@ -307,68 +336,374 @@ impl Dx12Renderer {
             -(size.1 as f32 / screen.1 as f32) * 2.0,
         ];
 
+        let sampled = with_dx12_lock(&lock, |lock_held| -> anyhow::Result<()> {
+            let action = dx12_mailbox_action(lock_held, has_cache);
+            let src = match action {
+                Dx12MailboxAction::Skip => return Ok(()),
+                Dx12MailboxAction::DrawLastGood => {
+                    let Some(good) = self.last_good.get(&layer) else {
+                        return Ok(());
+                    };
+                    good.resource.clone()
+                }
+                Dx12MailboxAction::DrawSharedAndSnapshot => shared.clone(),
+            };
+
+            let slot = (layer.min(MAX_LAYER_SRVS - 1)) as usize;
+            let (cpu_srv, gpu_srv) = unsafe {
+                let cpu = self.texture_descriptor.GetCPUDescriptorHandleForHeapStart();
+                let gpu = self.texture_descriptor.GetGPUDescriptorHandleForHeapStart();
+                (
+                    D3D12_CPU_DESCRIPTOR_HANDLE {
+                        ptr: cpu.ptr + self.srv_descriptor_size * slot,
+                    },
+                    D3D12_GPU_DESCRIPTOR_HANDLE {
+                        ptr: gpu.ptr + (self.srv_descriptor_size * slot) as u64,
+                    },
+                )
+            };
+            bind_srv(device, &src, cpu_srv);
+
+            unsafe {
+                let backbuffer = swapchain.GetBuffer::<ID3D12Resource>(backbuffer_index)?;
+                let (ref command_list, ref command_alloc) =
+                    self.command_list[backbuffer_index as usize];
+
+                if self.recording.is_none() {
+                    command_alloc.Reset()?;
+                    command_list.Reset(command_alloc, self.pipeline(color_space))?;
+                    command_list.SetGraphicsRootSignature(&self.sig);
+                    command_list.SetDescriptorHeaps(&[Some(self.texture_descriptor.clone())]);
+                    command_list.RSSetViewports(&[D3D12_VIEWPORT {
+                        TopLeftX: 0.0,
+                        TopLeftY: 0.0,
+                        Width: screen.0 as _,
+                        Height: screen.1 as _,
+                        MinDepth: D3D12_MIN_DEPTH,
+                        MaxDepth: D3D12_MAX_DEPTH,
+                    }]);
+                    command_list.RSSetScissorRects(&[RECT {
+                        left: 0,
+                        top: 0,
+                        right: screen.0 as _,
+                        bottom: screen.1 as _,
+                    }]);
+                    let stored = self.bb_state[backbuffer_index as usize];
+                    let after = D3D12_RESOURCE_STATE_RENDER_TARGET.0 as u32;
+                    if resource_barrier_needed(stored, after) {
+                        command_list.ResourceBarrier(&[transition(
+                            &backbuffer,
+                            D3D12_RESOURCE_STATES(stored as i32),
+                            D3D12_RESOURCE_STATE_RENDER_TARGET,
+                        )]);
+                        self.bb_state[backbuffer_index as usize] = after;
+                    }
+                    command_list.OMSetRenderTargets(1, Some(&render_target), true, None);
+                    command_list.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+                    self.recording = Some((backbuffer_index, backbuffer));
+                }
+
+                if action == Dx12MailboxAction::DrawSharedAndSnapshot {
+                    let src_in_psr = match self.textures.get_mut(&layer) {
+                        Some(
+                            OverlayTextureState::Created(_, tex)
+                            | OverlayTextureState::CreatedPending(_, tex, _),
+                        ) => &mut tex.left_in_psr,
+                        _ => return Ok(()),
+                    };
+                    snapshot_last_good(
+                        device,
+                        command_list,
+                        &mut self.last_good,
+                        layer,
+                        &shared,
+                        src_in_psr,
+                    );
+                }
+
+                command_list.SetGraphicsRoot32BitConstants(0, 4, rect.as_ptr().cast(), 0);
+                command_list.SetGraphicsRootDescriptorTable(1, gpu_srv);
+                command_list.DrawInstanced(4, 1, 0, 0);
+            }
+            Ok(())
+        })
+        .map_err(anyhow::Error::from)?;
+        match sampled {
+            Some(Ok(())) | None => Ok(()),
+            Some(Err(e)) => Err(e),
+        }
+    }
+
+    pub fn finish(&mut self, queue: &ID3D12CommandQueue) -> anyhow::Result<()> {
+        let Some((backbuffer_index, backbuffer)) = self.recording.take() else {
+            return Ok(());
+        };
         unsafe {
-            let backbuffer = swapchain.GetBuffer::<ID3D12Resource>(backbuffer_index)?;
-            let (ref command_list, ref command_alloc) =
-                self.command_list[backbuffer_index as usize];
-
-            command_alloc.Reset()?;
-            command_list.Reset(command_alloc, &self.pipeline)?;
-
-            command_list.SetGraphicsRootSignature(&self.sig);
-            command_list.SetGraphicsRoot32BitConstants(0, 4, rect.as_ptr().cast(), 0);
-
-            command_list.SetDescriptorHeaps(&[Some(self.texture_descriptor.clone())]);
-            command_list.SetGraphicsRootDescriptorTable(1, gpu_srv);
-
-            command_list.RSSetViewports(&[D3D12_VIEWPORT {
-                TopLeftX: 0.0,
-                TopLeftY: 0.0,
-                Width: screen.0 as _,
-                Height: screen.1 as _,
-                MinDepth: D3D12_MIN_DEPTH,
-                MaxDepth: D3D12_MAX_DEPTH,
-            }]);
-            command_list.RSSetScissorRects(&[RECT {
-                left: 0,
-                top: 0,
-                right: screen.0 as _,
-                bottom: screen.1 as _,
-            }]);
-
-            command_list.ResourceBarrier(&[transition(
-                &backbuffer,
-                D3D12_RESOURCE_STATE_PRESENT,
-                D3D12_RESOURCE_STATE_RENDER_TARGET,
-            )]);
-
-            command_list.OMSetRenderTargets(1, Some(&render_target), true, None);
-            command_list.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            command_list.DrawInstanced(4, 1, 0, 0);
-
+            let (ref command_list, _) = self.command_list[backbuffer_index as usize];
             command_list.ResourceBarrier(&[transition(
                 &backbuffer,
                 D3D12_RESOURCE_STATE_RENDER_TARGET,
                 D3D12_RESOURCE_STATE_PRESENT,
             )]);
-
+            self.bb_state[backbuffer_index as usize] = D3D12_RESOURCE_STATE_PRESENT.0 as u32;
             command_list.Close()?;
             original_execute_command_lists(queue, &[Some(command_list.clone().into())]);
         }
         self.fence.register(queue)?;
-
         Ok(())
+    }
+
+    fn pipeline(&self, color_space: OverlayBlitColorSpace) -> &ID3D12PipelineState {
+        match color_space {
+            OverlayBlitColorSpace::Sdr => &self.pipeline,
+            OverlayBlitColorSpace::Scrgb => &self.pipeline_scrgb,
+            OverlayBlitColorSpace::Pq => &self.pipeline_pq,
+        }
     }
 }
 
 impl Drop for Dx12Renderer {
     fn drop(&mut self) {
-        self.fence.wait_pending().expect("error while waiting gpu");
+        if !self.fence.is_pending() {
+            return;
+        }
+        std::mem::forget(self.sig.clone());
+        std::mem::forget(self.pipeline.clone());
+        std::mem::forget(self.pipeline_scrgb.clone());
+        std::mem::forget(self.pipeline_pq.clone());
+        std::mem::forget(self.texture_descriptor.clone());
+        for tex in self.textures.values() {
+            if let OverlayTextureState::Created(_, res)
+            | OverlayTextureState::CreatedPending(_, res, _) = tex
+            {
+                std::mem::forget(res.resource.clone());
+            }
+        }
+        for good in self.last_good.values() {
+            std::mem::forget(good.resource.clone());
+        }
+        for (list, alloc) in &self.command_list {
+            std::mem::forget(list.clone());
+            std::mem::forget(alloc.clone());
+        }
+        if let Some((_, bb)) = &self.recording {
+            std::mem::forget(bb.clone());
+        }
+        self.fence.leak();
     }
 }
 
 unsafe impl Send for Dx12Renderer {}
 unsafe impl Sync for Dx12Renderer {}
+
+fn open_shared(
+    device: &ID3D12Device,
+    interop: &ID3D11Device,
+    handle: core::num::NonZeroU32,
+) -> anyhow::Result<Option<Dx12Tex>> {
+    let mut texture = None;
+    unsafe {
+        device.OpenSharedHandle::<ID3D12Resource>(HANDLE(handle.get() as _), &mut texture)?;
+    }
+    let resource = texture.context("cannot open shared texture")?;
+    let desc = unsafe { resource.GetDesc() };
+    if desc.Width == 0 || desc.Height == 0 {
+        return Ok(None);
+    }
+    let lock = match glint_gpu_texture::open_shared_texture2d(interop, handle.get()) {
+        Ok(d3d11) => match d3d11.cast::<IDXGIKeyedMutex>() {
+            Ok(mutex) => Dx12Lock::Mutex(mutex),
+            Err(_) => Dx12Lock::NoMutex,
+        },
+        Err(_) => Dx12Lock::InteropFailed,
+    };
+    Ok(Some(Dx12Tex {
+        resource,
+        lock,
+        left_in_psr: false,
+    }))
+}
+
+fn with_dx12_lock<R>(
+    lock: &Dx12Lock,
+    f: impl FnOnce(bool) -> R,
+) -> windows::core::Result<Option<R>> {
+    match lock {
+        Dx12Lock::InteropFailed => Ok(Some(f(false))),
+        Dx12Lock::NoMutex => Ok(Some(f(true))),
+        Dx12Lock::Mutex(mutex) => with_keyed_mutex_sampled(Some(mutex), f),
+    }
+}
+
+fn bind_srv(device: &ID3D12Device, texture: &ID3D12Resource, cpu_srv: D3D12_CPU_DESCRIPTOR_HANDLE) {
+    let desc = unsafe { texture.GetDesc() };
+    unsafe {
+        device.CreateShaderResourceView(
+            texture,
+            Some(&D3D12_SHADER_RESOURCE_VIEW_DESC {
+                Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+                Format: desc.Format,
+                ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+                Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
+                    Texture2D: D3D12_TEX2D_SRV {
+                        MipLevels: 1,
+                        ..Default::default()
+                    },
+                },
+            }),
+            cpu_srv,
+        );
+    }
+}
+
+fn snapshot_last_good(
+    device: &ID3D12Device,
+    command_list: &ID3D12GraphicsCommandList,
+    last_good: &mut HashMap<u32, LastGood>,
+    layer: u32,
+    src: &ID3D12Resource,
+    src_in_psr: &mut bool,
+) {
+    let desc = unsafe { src.GetDesc() };
+    if desc.Width == 0 || desc.Height == 0 {
+        return;
+    }
+    let reuse = last_good.get(&layer).is_some_and(|g| {
+        g.width == desc.Width && g.height == desc.Height && g.format == desc.Format
+    });
+    if !reuse {
+        let heap = D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_DEFAULT,
+            ..Default::default()
+        };
+        let copy_desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            Alignment: 0,
+            Width: desc.Width,
+            Height: desc.Height,
+            DepthOrArraySize: 1,
+            MipLevels: 1,
+            Format: desc.Format,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
+            Flags: D3D12_RESOURCE_FLAG_NONE,
+        };
+        let mut resource = None;
+        if unsafe {
+            device.CreateCommittedResource::<ID3D12Resource>(
+                &heap,
+                D3D12_HEAP_FLAG_NONE,
+                &copy_desc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                None,
+                &mut resource,
+            )
+        }
+        .is_err()
+        {
+            return;
+        }
+        let Some(resource) = resource else {
+            return;
+        };
+        last_good.insert(
+            layer,
+            LastGood {
+                resource,
+                width: desc.Width,
+                height: desc.Height,
+                format: desc.Format,
+                srv_ready: false,
+            },
+        );
+    }
+    let Some(good) = last_good.get_mut(&layer) else {
+        return;
+    };
+    unsafe {
+        if good.srv_ready {
+            command_list.ResourceBarrier(&[transition(
+                &good.resource,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+            )]);
+        }
+        if *src_in_psr {
+            command_list.ResourceBarrier(&[transition(
+                src,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_COPY_SOURCE,
+            )]);
+        }
+        command_list.CopyResource(&good.resource, src);
+        command_list.ResourceBarrier(&[
+            transition(
+                &good.resource,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            ),
+            transition(
+                src,
+                D3D12_RESOURCE_STATE_COPY_SOURCE,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            ),
+        ]);
+    }
+    good.srv_ready = true;
+    *src_in_psr = true;
+}
+
+fn resource_barrier_needed(stored: u32, after: u32) -> bool {
+    stored != after
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Dx12MailboxAction, dx12_mailbox_action, resource_barrier_needed};
+
+    #[test]
+    fn busy_with_cache_uses_last_good_not_shared() {
+        assert_eq!(
+            dx12_mailbox_action(false, true),
+            Dx12MailboxAction::DrawLastGood
+        );
+    }
+
+    #[test]
+    fn busy_without_cache_skips_quad() {
+        assert_eq!(dx12_mailbox_action(false, false), Dx12MailboxAction::Skip);
+    }
+
+    #[test]
+    fn lock_samples_shared_and_snapshots() {
+        assert_eq!(
+            dx12_mailbox_action(true, false),
+            Dx12MailboxAction::DrawSharedAndSnapshot
+        );
+        assert_eq!(
+            dx12_mailbox_action(true, true),
+            Dx12MailboxAction::DrawSharedAndSnapshot
+        );
+    }
+
+    #[test]
+    fn resource_barrier_needed_skips_when_stored_matches() {
+        assert!(!resource_barrier_needed(4, 4));
+        assert!(!resource_barrier_needed(1024, 1024));
+        assert!(!resource_barrier_needed(0, 0));
+        assert!(!resource_barrier_needed(1, 1));
+    }
+
+    #[test]
+    fn resource_barrier_needed_emits_when_differs() {
+        assert!(resource_barrier_needed(0, 4));
+        assert!(resource_barrier_needed(4, 0));
+        assert!(resource_barrier_needed(1, 1024));
+    }
+}
 
 unsafe fn transition(
     res: &ID3D12Resource,

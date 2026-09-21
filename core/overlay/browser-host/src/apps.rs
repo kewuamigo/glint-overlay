@@ -197,16 +197,12 @@ pub fn asset_roots() -> Vec<PathBuf> {
 
 /// React shims the app bundles import as `glint-plugin://_shared/*`.
 pub fn shared_deps_root() -> PathBuf {
-    repo_dir(
-        "GLINT_PLUGIN_SHARED_DIR",
-        "host/cef/plugin-shared",
-    )
+    repo_dir("GLINT_PLUGIN_SHARED_DIR", "host/cef/plugin-shared")
 }
 
 fn appdata_glint() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|dir| {
-        PathBuf::from(dir).join(glint_overlay_common::product::APP_DATA_DIR_NAME)
-    })
+    std::env::var_os("APPDATA")
+        .map(|dir| PathBuf::from(dir).join(glint_overlay_common::product::APP_DATA_DIR_NAME))
 }
 
 /// User-installed apps root (`%APPDATA%/Glint/apps`).

@@ -1,17 +1,22 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from 'react';
-import type { WindowBounds } from '../hooks/useOverlayWindows';
+import { flushSync } from 'react-dom';
+import { hostInvoke } from '@glint/overlay-bridge';
+import {
+  persistOverlayLayout,
+  type WindowBounds,
+} from '../hooks/useOverlayWindows';
 
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
-/** Fired after layout when an AppWindow finished applying a move (not resize). */
+/** Fired when an AppWindow move or resize commits (not during titlebar dest). */
 export const OVERLAY_WINDOW_MOVED = 'overlay-window-moved';
 
 type Props = {
@@ -32,8 +37,49 @@ type Props = {
   children: ReactNode;
 };
 
+type MoveDrag = {
+  kind: 'move';
+  startX: number;
+  startY: number;
+  /** `left`/`top` relative to `.overlay-window-layer`. */
+  startBounds: WindowBounds;
+  /** Layer top-left in the CEF atlas / viewport. */
+  atlasOrigin: { x: number; y: number };
+};
+
+type ResizeDrag = {
+  kind: 'resize';
+  edge: Edge;
+  startX: number;
+  startY: number;
+  startBounds: WindowBounds;
+};
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/** Two frames so CEF OSR can paint the isolated atlas before crop. */
+function afterPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
+function layerAtlasOrigin(el: HTMLElement | null): { x: number; y: number } {
+  const parent = el?.offsetParent;
+  if (!(parent instanceof HTMLElement)) return { x: 0, y: 0 };
+  const rect = parent.getBoundingClientRect();
+  return { x: Math.round(rect.left), y: Math.round(rect.top) };
+}
+
+function toAtlas(
+  layout: { x: number; y: number },
+  origin: { x: number; y: number },
+): [number, number] {
+  return [layout.x + origin.x, layout.y + origin.y];
 }
 
 export function AppWindow({
@@ -55,18 +101,11 @@ export function AppWindow({
 }: Props) {
   const boundsRef = useRef(bounds);
   boundsRef.current = bounds;
+  const elRef = useRef<HTMLDivElement>(null);
+  const [promoted, setPromoted] = useState(false);
+  const promoteGen = useRef(0);
 
-  const dragRef = useRef<
-    | { kind: 'move'; startX: number; startY: number; startBounds: WindowBounds }
-    | {
-        kind: 'resize';
-        edge: Edge;
-        startX: number;
-        startY: number;
-        startBounds: WindowBounds;
-      }
-    | null
-  >(null);
+  const dragRef = useRef<MoveDrag | ResizeDrag | null>(null);
 
   const applyBounds = useCallback(
     (next: WindowBounds) => {
@@ -81,15 +120,8 @@ export function AppWindow({
     [minWidth, minHeight, maxWidth, maxHeight, onBoundsChange],
   );
 
-  // ResizeObserver covers size sync for the CEF hole; position-only moves do
-  // not resize the hole element, so notify after layout while moving.
-  useLayoutEffect(() => {
-    if (!document.body.classList.contains('overlay-window-moving')) return;
-    window.dispatchEvent(new Event(OVERLAY_WINDOW_MOVED));
-  }, [bounds.x, bounds.y]);
-
   useEffect(() => {
-    const onMove = (event: MouseEvent) => {
+    const onMove = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
 
@@ -98,11 +130,9 @@ export function AppWindow({
       const start = drag.startBounds;
 
       if (drag.kind === 'move') {
-        applyBounds({
-          ...start,
-          x: start.x + dx,
-          y: start.y + dy,
-        });
+        const x = clamp(start.x + dx, 0, window.innerWidth - minWidth);
+        const y = clamp(start.y + dy, 0, window.innerHeight - minHeight - 88);
+        void hostInvoke('native.overlay.setPosition', toAtlas({ x, y }, drag.atlasOrigin));
         return;
       }
 
@@ -133,41 +163,111 @@ export function AppWindow({
       applyBounds({ x, y, width: clampedWidth, height: clampedHeight });
     };
 
-    const onUp = () => {
-      if (!dragRef.current) return;
-      const wasMoving = dragRef.current.kind === 'move';
+    const onUp = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
       dragRef.current = null;
       document.body.classList.remove('overlay-window-dragging');
       document.body.classList.remove('overlay-window-moving');
-      // Final hole sync after last layout (class cleared so effect won't fire).
-      if (wasMoving) {
-        window.dispatchEvent(new Event(OVERLAY_WINDOW_MOVED));
+      document.body.classList.remove('overlay-promoting');
+      void hostInvoke('native.overlay.setShellDrag', [false]);
+      try {
+        (event.target as Element | null)?.releasePointerCapture?.(event.pointerId);
+      } catch {
+        /* already released */
       }
+
+      if (drag.kind === 'move') {
+        const dx = event.clientX - drag.startX;
+        const dy = event.clientY - drag.startY;
+        const start = drag.startBounds;
+        const next = {
+          ...start,
+          x: clamp(start.x + dx, 0, window.innerWidth - minWidth),
+          y: clamp(start.y + dy, 0, window.innerHeight - minHeight - 88),
+        };
+        void (async () => {
+          await hostInvoke(
+            'native.overlay.setPosition',
+            toAtlas(next, drag.atlasOrigin),
+          );
+          flushSync(() => {
+            if (elRef.current) {
+              elRef.current.style.visibility = '';
+              elRef.current.classList.remove('is-promoting');
+            }
+            setPromoted(false);
+          });
+          applyBounds(next);
+          await hostInvoke('native.overlay.setPosition', []);
+          persistOverlayLayout();
+          window.dispatchEvent(new Event(OVERLAY_WINDOW_MOVED));
+        })();
+        return;
+      }
+
+      persistOverlayLayout();
     };
 
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
     return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
     };
   }, [applyBounds, minWidth, minHeight, maxWidth, maxHeight]);
 
-  const startMove = (event: React.MouseEvent) => {
+  const startMove = (event: React.PointerEvent) => {
     if (event.button !== 0) return;
     event.preventDefault();
     onFocus();
+    const start = boundsRef.current;
+    const atlasOrigin = layerAtlasOrigin(elRef.current);
     dragRef.current = {
       kind: 'move',
       startX: event.clientX,
       startY: event.clientY,
-      startBounds: boundsRef.current,
+      startBounds: start,
+      atlasOrigin,
     };
     document.body.classList.add('overlay-window-dragging');
     document.body.classList.add('overlay-window-moving');
+    void hostInvoke('native.overlay.setShellDrag', [true]);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* ignore */
+    }
+    const gen = ++promoteGen.current;
+    flushSync(() => {
+      document.body.classList.add('overlay-promoting');
+      elRef.current?.classList.add('is-promoting');
+    });
+    void (async () => {
+      await afterPaint();
+      if (dragRef.current?.kind !== 'move' || promoteGen.current !== gen) return;
+      const [ax, ay] = toAtlas(start, atlasOrigin);
+      await hostInvoke('native.overlay.setPosition', [
+        ax,
+        ay,
+        start.width,
+        start.height,
+      ]);
+      if (dragRef.current?.kind !== 'move' || promoteGen.current !== gen) return;
+      flushSync(() => {
+        if (elRef.current) {
+          elRef.current.style.visibility = 'hidden';
+          elRef.current.classList.remove('is-promoting');
+        }
+        document.body.classList.remove('overlay-promoting');
+        setPromoted(true);
+      });
+    })();
   };
 
-  const startResize = (edge: Edge) => (event: React.MouseEvent) => {
+  const startResize = (edge: Edge) => (event: React.PointerEvent) => {
     event.preventDefault();
     event.stopPropagation();
     onFocus();
@@ -179,6 +279,12 @@ export function AppWindow({
       startBounds: boundsRef.current,
     };
     document.body.classList.add('overlay-window-dragging');
+    void hostInvoke('native.overlay.setShellDrag', [true]);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* ignore */
+    }
   };
 
   if (minimized) return null;
@@ -189,10 +295,12 @@ export function AppWindow({
     width: bounds.width,
     height: bounds.height,
     zIndex,
+    visibility: promoted ? 'hidden' : undefined,
   };
 
   return (
     <div
+      ref={elRef}
       className={[
         'overlay-app-window',
         focused ? 'focused' : '',
@@ -203,14 +311,14 @@ export function AppWindow({
       style={style}
       onMouseDown={onFocus}
     >
-      <header className="overlay-window-titlebar" onMouseDown={startMove}>
+      <header className="overlay-window-titlebar" onPointerDown={startMove}>
         <span className="overlay-window-title">{title}</span>
         <div className="overlay-window-controls">
           <button
             type="button"
             className="overlay-window-btn minimize"
             aria-label="Minimize"
-            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={onMinimize}
           >
             ─
@@ -219,7 +327,7 @@ export function AppWindow({
             type="button"
             className="overlay-window-btn close"
             aria-label="Close"
-            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={onClose}
           >
             ✕
@@ -231,7 +339,7 @@ export function AppWindow({
         <div
           key={edge}
           className={`overlay-resize-handle overlay-resize-${edge}`}
-          onMouseDown={startResize(edge)}
+          onPointerDown={startResize(edge)}
           aria-hidden
         />
       ))}

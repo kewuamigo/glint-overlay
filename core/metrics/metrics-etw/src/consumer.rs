@@ -1,12 +1,12 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use anyhow::Result;
+use ferrisetw::EventRecord;
 use ferrisetw::parser::Parser;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::{stop_trace_by_name, UserTrace};
-use ferrisetw::EventRecord;
+use ferrisetw::trace::{UserTrace, stop_trace_by_name};
 use parking_lot::Mutex;
 use tracing::info;
 use windows::Win32::System::Diagnostics::Etw::EVENT_RECORD;
@@ -78,16 +78,18 @@ impl EtwMetricsConsumer {
         let native_tracker = self.tracker.clone();
         let dxgi_counter = self.counters.clone();
         let dxgi_provider = Provider::by_guid(DXGI_GUID)
-            .add_callback(move |record: &EventRecord, _schema_locator: &SchemaLocator| {
-                if record.event_id() != DXGI_PRESENT_START {
-                    return;
-                }
-                if record.process_id() != target_pid {
-                    return;
-                }
-                dxgi_counter.dxgi.fetch_add(1, Ordering::Relaxed);
-                native_tracker.lock().on_dxgi_present();
-            })
+            .add_callback(
+                move |record: &EventRecord, _schema_locator: &SchemaLocator| {
+                    if record.event_id() != DXGI_PRESENT_START {
+                        return;
+                    }
+                    if record.process_id() != target_pid {
+                        return;
+                    }
+                    dxgi_counter.dxgi.fetch_add(1, Ordering::Relaxed);
+                    native_tracker.lock().on_dxgi_present();
+                },
+            )
             .build();
 
         let flip_tracker = self.tracker.clone();
@@ -96,57 +98,65 @@ impl EtwMetricsConsumer {
         let dxgk_present_counter = self.counters.clone();
         let dxgk_provider = Provider::by_guid(DXGKRNL_GUID)
             .any(DXGKRNL_KEYWORD_PRESENT | DXGKRNL_KEYWORD_BASE)
-            .add_callback(move |record: &EventRecord, schema_locator: &SchemaLocator| {
-                let event_id = record.event_id();
-                let is_flip = FLIP_EVENT_IDS.contains(&event_id);
-                let is_present = PRESENT_EVENT_IDS.contains(&event_id);
-                if !is_flip && !is_present {
-                    return;
-                }
+            .add_callback(
+                move |record: &EventRecord, schema_locator: &SchemaLocator| {
+                    let event_id = record.event_id();
+                    let is_flip = FLIP_EVENT_IDS.contains(&event_id);
+                    let is_present = PRESENT_EVENT_IDS.contains(&event_id);
+                    if !is_flip && !is_present {
+                        return;
+                    }
 
-                if !event_matches_target(record, schema_locator, target_pid) {
-                    return;
-                }
+                    if !event_matches_target(record, schema_locator, target_pid) {
+                        return;
+                    }
 
-                if is_flip {
-                    dxgk_flip_counter.dxgk_flip.fetch_add(1, Ordering::Relaxed);
-                    flip_tracker.lock().on_flip();
-                } else {
-                    dxgk_present_counter.dxgk_present.fetch_add(1, Ordering::Relaxed);
-                    present_hist_tracker.lock().on_present_history();
-                }
-            })
+                    if is_flip {
+                        dxgk_flip_counter.dxgk_flip.fetch_add(1, Ordering::Relaxed);
+                        flip_tracker.lock().on_flip();
+                    } else {
+                        dxgk_present_counter
+                            .dxgk_present
+                            .fetch_add(1, Ordering::Relaxed);
+                        present_hist_tracker.lock().on_present_history();
+                    }
+                },
+            )
             .build();
 
         let tag_tracker = self.tracker.clone();
         let intel_pm_provider = Provider::by_guid(INTEL_PRESENTMON_GUID)
             .any(INTEL_PM_KEYWORD_FRAME_TYPES)
-            .add_callback(move |record: &EventRecord, _schema_locator: &SchemaLocator| {
-                match record.event_id() {
-                    PM_PRESENT_FRAME_TYPE => {
-                        // Emitted in-process by the FG SDK on the present thread,
-                        // so the record PID identifies the game directly.
-                        if record.process_id() != target_pid {
-                            return;
+            .add_callback(
+                move |record: &EventRecord, _schema_locator: &SchemaLocator| {
+                    match record.event_id() {
+                        PM_PRESENT_FRAME_TYPE => {
+                            // Emitted in-process by the FG SDK on the present thread,
+                            // so the record PID identifies the game directly.
+                            if record.process_id() != target_pid {
+                                return;
+                            }
+                            if let Some(tag) =
+                                read_payload_u8(record, PM_PRESENT_FRAME_TYPE_TAG_OFFSET)
+                            {
+                                tag_tracker.lock().on_tagged_present(tag);
+                            }
                         }
-                        if let Some(tag) =
-                            read_payload_u8(record, PM_PRESENT_FRAME_TYPE_TAG_OFFSET)
-                        {
-                            tag_tracker.lock().on_tagged_present(tag);
+                        PM_FLIP_FRAME_TYPE => {
+                            // Driver-emitted (e.g. AMD AFMF) with no game PID attached.
+                            // Full attribution needs the PresentMon MPO3/PresentId state
+                            // machine; we accept all tags since only the FG-active
+                            // fullscreen game produces them in practice.
+                            if let Some(tag) =
+                                read_payload_u8(record, PM_FLIP_FRAME_TYPE_TAG_OFFSET)
+                            {
+                                tag_tracker.lock().on_tagged_flip(tag);
+                            }
                         }
+                        _ => {}
                     }
-                    PM_FLIP_FRAME_TYPE => {
-                        // Driver-emitted (e.g. AMD AFMF) with no game PID attached.
-                        // Full attribution needs the PresentMon MPO3/PresentId state
-                        // machine; we accept all tags since only the FG-active
-                        // fullscreen game produces them in practice.
-                        if let Some(tag) = read_payload_u8(record, PM_FLIP_FRAME_TYPE_TAG_OFFSET) {
-                            tag_tracker.lock().on_tagged_flip(tag);
-                        }
-                    }
-                    _ => {}
-                }
-            })
+                },
+            )
             .build();
 
         let trace = UserTrace::new()

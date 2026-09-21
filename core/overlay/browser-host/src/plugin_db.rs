@@ -55,8 +55,8 @@ fn migrate_store_json(plugin_dir: &Path, conn: &Connection) -> Result<(), String
                 match serde_json::from_str::<Value>(raw) {
                     Ok(Value::Object(map)) => {
                         for (key, value) in map {
-                            let encoded = serde_json::to_string(&value)
-                                .unwrap_or_else(|_| "null".into());
+                            let encoded =
+                                serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
                             if conn
                                 .execute(
                                     "INSERT INTO kv (key, value) VALUES (?1, ?2)
@@ -118,8 +118,7 @@ pub fn get(plugin_dir: &Path, sql: &str, params_json: &[Value]) -> Result<String
         .prepare(sql)
         .map_err(|e| format!("db.get prepare failed: {e}"))?;
     bind_params(&mut stmt, params_json)?;
-    let mut rows = stmt
-        .raw_query();
+    let mut rows = stmt.raw_query();
     match rows.next() {
         Ok(Some(row)) => Ok(row_to_json(row)?.to_string()),
         Ok(None) => Ok("null".into()),
@@ -199,9 +198,7 @@ fn sqlite_value_to_json(v: rusqlite::types::Value) -> Value {
         rusqlite::types::Value::Integer(i) => json!(i),
         rusqlite::types::Value::Real(f) => json!(f),
         rusqlite::types::Value::Text(s) => Value::String(s),
-        rusqlite::types::Value::Blob(b) => {
-            Value::Array(b.into_iter().map(|x| json!(x)).collect())
-        }
+        rusqlite::types::Value::Blob(b) => Value::Array(b.into_iter().map(|x| json!(x)).collect()),
     }
 }
 

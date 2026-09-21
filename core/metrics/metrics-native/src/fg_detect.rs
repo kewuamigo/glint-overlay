@@ -5,8 +5,8 @@
 //! while the real swapchain presents at the generated rate. The loaded FG
 //! module tells us which SDK is responsible, Steam-overlay style.
 
-use windows::core::PCWSTR;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::core::PCWSTR;
 
 pub const FG_NONE: u32 = 0;
 pub const FG_DLSS: u32 = 1;

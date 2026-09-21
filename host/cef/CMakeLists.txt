@@ -90,6 +90,9 @@ target_link_libraries(${CEF_TARGET}
 )
 if(MSVC)
   target_compile_options(${CEF_TARGET} PRIVATE /bigobj)
+  # Protobuf 21.12 HasBits::Or is size_t→int (C4267). CEF wrapper enables /WX;
+  # Paint.layer (optional) instantiates that template from generated pb.cc.
+  set_source_files_properties("${GO_PROTO_CC}" PROPERTIES COMPILE_OPTIONS "/wd4267")
 endif()
 
 # Windows: delay-load + manifest helpers from CEF macros

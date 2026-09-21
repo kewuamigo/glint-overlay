@@ -11,6 +11,7 @@ use anyhow::Result;
 fn main() {
     if let Err(err) = run() {
         let _ = launcher::write_startup_error(&err);
+        eprintln!("{err:#}");
         std::process::exit(1);
     }
 }
@@ -23,8 +24,7 @@ fn run() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();

@@ -27,16 +27,18 @@ use windows::{
 
 use windows::core::HRESULT;
 
-use crate::ty::CopyRect;
+use crate::ty::{CopyRect, Rect};
 
-/// Max time to wait for the shared-texture keyed mutex.
+/// AcquireSync timeout: 0 = do not wait. If the game holds the mutex, skip
+/// this publish so the host event loop never blocks and the game Present
+/// thread is not stalled by a host-side wait.
 ///
 /// This code runs on the Electron main thread (via the node addon). An
 /// unbounded `AcquireSync(0, u32::MAX)` hard-blocks the host event loop in
 /// native code whenever the game side stalls while holding the mutex — no
 /// input injection, no global shortcuts, no timers. Dropping a frame is
 /// always preferable to freezing the host.
-const MUTEX_TIMEOUT_MS: u32 = 100;
+const MUTEX_TIMEOUT_MS: u32 = 0;
 
 const WAIT_ABANDONED: i32 = 0x80;
 
@@ -46,9 +48,8 @@ const WAIT_ABANDONED: i32 = 0x80;
 /// (`WAIT_TIMEOUT`), which windows-rs maps to `Ok(())` — so the raw HRESULT
 /// must be inspected through the vtable.
 fn acquire_keyed(mutex: &IDXGIKeyedMutex, timeout_ms: u32) -> anyhow::Result<bool> {
-    let hr: HRESULT = unsafe {
-        (Interface::vtable(mutex).AcquireSync)(Interface::as_raw(mutex), 0, timeout_ms)
-    };
+    let hr: HRESULT =
+        unsafe { (Interface::vtable(mutex).AcquireSync)(Interface::as_raw(mutex), 0, timeout_ms) };
     if hr.is_err() {
         bail!("AcquireSync failed: {hr:?}");
     }
@@ -107,6 +108,44 @@ impl<const BUFFERS: usize> OverlaySurface<BUFFERS> {
         self.texture = BufferedTexture::new();
     }
 
+    /// Size of the last-complete mailbox, if one exists.
+    pub fn current_size(&self) -> Option<(u32, u32)> {
+        let (texture, _) = self.texture.current()?;
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe {
+            texture.GetDesc(&mut desc);
+        }
+        Some((desc.Width, desc.Height))
+    }
+
+    /// Crop `src` from the last-complete mailbox into `dest` as a window-sized
+    /// shared texture. One GPU copy. Returns `Some` when dest allocated a new handle.
+    pub fn crop_rect(
+        &self,
+        dest: &mut Self,
+        src: Rect,
+    ) -> anyhow::Result<Option<UpdateSharedHandle>> {
+        let Some((texture, mutex)) = self.texture.current() else {
+            bail!("no last-complete overlay mailbox to crop");
+        };
+        if !acquire_keyed(mutex, MUTEX_TIMEOUT_MS)? {
+            bail!("mailbox mutex busy");
+        }
+        defer!(unsafe {
+            _ = mutex.ReleaseSync(0);
+        });
+        dest.update_surface_from(
+            src.width,
+            src.height,
+            texture,
+            Some(CopyRect {
+                dst_x: 0,
+                dst_y: 0,
+                src,
+            }),
+        )
+    }
+
     /// Update the surface from a NT handle of a Direct3D texture.
     /// * Returns [`None`]` if the update is done to an existing internal texture.
     /// * Returns [`Some`]` if a new internal texture is created, due to size change.
@@ -119,8 +158,9 @@ impl<const BUFFERS: usize> OverlaySurface<BUFFERS> {
         rect: Option<CopyRect>,
     ) -> anyhow::Result<Option<UpdateSharedHandle>> {
         let device1 = self.device.cast::<ID3D11Device1>()?;
-        let src_texture =
-            unsafe { device1.OpenSharedResource1::<ID3D11Texture2D>(HANDLE(handle as usize as *mut _))? };
+        let src_texture = unsafe {
+            device1.OpenSharedResource1::<ID3D11Texture2D>(HANDLE(handle as usize as *mut _))?
+        };
         with_external_texture(&src_texture, |src_texture| {
             self.update_surface_from(width, height, src_texture, rect)
         })
@@ -411,6 +451,10 @@ impl<const BUFFERS: usize> BufferedTexture<BUFFERS> {
             texture: [const { None }; BUFFERS],
             index: 0,
         }
+    }
+
+    fn current(&self) -> Option<&(ID3D11Texture2D, IDXGIKeyedMutex)> {
+        self.texture[self.index].as_ref()
     }
 
     /// Get a mutable reference to the texture slot for the given size.

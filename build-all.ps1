@@ -127,6 +127,7 @@ if (-not $NoRust) {
     Write-Host "  Launcher:     target\release\glint-launcher.exe"
     Write-Host "  ETW metrics:  target\release\glint-metrics-etw.exe"
     Write-Host "  Overlay DLL:  target\release\glint-overlay\glint_overlay-x64.dll"
+    Write-Host "  Achievements: target\release\glint_achievements_native.dll"
     Write-Host "  Browser exe:  host\native\glint-browser.exe"
 }
 

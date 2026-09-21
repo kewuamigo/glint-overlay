@@ -21,13 +21,10 @@ void OsrClient::GetViewRect(CefRefPtr<CefBrowser> /*browser*/, CefRect& rect) {
 
 bool OsrClient::GetScreenInfo(CefRefPtr<CefBrowser> /*browser*/, CefScreenInfo& screen_info) {
   CefRect rect(0, 0, width_ > 0 ? width_ : 1, height_ > 0 ? height_ : 1);
-  float dpi_scale = 1.0f;
-  HDC hdc = GetDC(nullptr);
-  if (hdc) {
-    dpi_scale = static_cast<float>(GetDeviceCaps(hdc, LOGPIXELSX)) / 96.0f;
-    ReleaseDC(nullptr, hdc);
-  }
-  screen_info.device_scale_factor = dpi_scale;
+  // OSR atlas coords are CSS pixels (SetSize / shell layout). A real DPI scale
+  // makes CEF paint a larger shared texture than SetSize reports, so host crops
+  // from the wrong region (top-left chrome baked into window promos, bottoms cut).
+  screen_info.device_scale_factor = 1.0f;
   screen_info.depth = 32;
   screen_info.depth_per_component = 8;
   screen_info.is_monochrome = false;
@@ -47,7 +44,7 @@ void OsrClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
 
 void OsrClient::OnAcceleratedPaint(CefRefPtr<CefBrowser> /*browser*/,
                                    PaintElementType type,
-                                   const RectList& /*dirtyRects*/,
+                                   const RectList& dirtyRects,
                                    const CefAcceleratedPaintInfo& info) {
   CEF_REQUIRE_UI_THREAD();
   if (windowed_ || type != PET_VIEW || hidden_ || !paint_fn_) return;
@@ -63,7 +60,12 @@ void OsrClient::OnAcceleratedPaint(CefRefPtr<CefBrowser> /*browser*/,
   }
   if (w == 0 || h == 0 || !info.shared_texture_handle) return;
 
-  paint_fn_(role_, info.shared_texture_handle, w, h);
+  std::vector<SharedDirtyRect> dirty;
+  dirty.reserve(dirtyRects.size());
+  for (const auto& r : dirtyRects) {
+    dirty.push_back({r.x, r.y, r.width, r.height});
+  }
+  paint_fn_(role_, info.shared_texture_handle, w, h, dirty.data(), dirty.size());
 }
 
 void OsrClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {

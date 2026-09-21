@@ -49,16 +49,17 @@ pub fn open_shared_texture2d(
     let handle = HANDLE(ptr::with_exposed_provenance_mut(nt_handle as usize));
 
     if let Ok(device1) = device.cast::<ID3D11Device1>() {
-        if let Ok(resource) =
-            unsafe { device1.OpenSharedResource1::<IDXGIResource1>(handle) }
-        {
-            return resource.cast().context("shared resource is not a 2D texture");
+        if let Ok(resource) = unsafe { device1.OpenSharedResource1::<IDXGIResource1>(handle) } {
+            return resource
+                .cast()
+                .context("shared resource is not a 2D texture");
         }
     }
 
     let mut texture = None;
     unsafe {
-        device.OpenSharedResource(handle, &mut texture)
+        device
+            .OpenSharedResource(handle, &mut texture)
             .context("OpenSharedResource failed")?;
     }
     texture.context("shared resource is not a 2D texture")

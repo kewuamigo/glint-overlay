@@ -41,6 +41,7 @@ features = [
     "Win32_UI_Controls",
     "Win32_System_Console",
     "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_OpenGL",
     "Win32_Graphics_Dxgi",
@@ -52,7 +53,9 @@ features = [
     "Win32_Graphics_Direct3D12",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Input_Ime",
-    "Win32_Globalization"
+    "Win32_Globalization",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
 ]
 
 [build-dependencies]

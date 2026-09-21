@@ -1,6 +1,8 @@
 //! Server-side IPC: named-pipe bind, listener loop, and per-client protocol.
 
 use anyhow::Context;
+use bincode::Encode;
+use core::time::Duration;
 use glint_overlay_common::{
     ipc::{ClientRequest, Frame, ServerResponse, ServerToClientPacket},
     request::{Request, WindowRequest},
@@ -10,8 +12,6 @@ use glint_overlay_core::{
     event_sink::OverlayEventSink,
 };
 use glint_overlay_event::{OverlayEvent, WindowEvent};
-use bincode::Encode;
-use core::time::Duration;
 use scopeguard::defer;
 use std::ffi::OsStr;
 use tokio::{
@@ -49,7 +49,7 @@ static SESSIONS: SessionCounter = SessionCounter::new();
 pub enum PipeRole {
     /// Electron AppShell — layer 0 only (`UpdateSharedHandle`).
     Shell,
-    /// Native CEF browser-host — layer ≥1 only (`UpdateLayerHandle`).
+    /// Native CEF browser-host — `UpdateLayerHandle` (chrome layer 0 + content ≥1).
     Cef,
 }
 
@@ -163,10 +163,7 @@ pub async fn serve_connection(server: NamedPipeServer, role: PipeRole) -> anyhow
 
         match req {
             Request::Window { id, request } => {
-                conn.reply(
-                    req_id,
-                    handle_window_event(client_id, id, request, role)?,
-                )?;
+                conn.reply(req_id, handle_window_event(client_id, id, request, role)?)?;
             }
         }
     }
@@ -233,6 +230,14 @@ fn handle_window_event(
                 backend.block_input(cmd.block);
             }
 
+            WindowRequest::HotKeyAndVisibility(cmd) => {
+                // Visibility from the heartbeat, not a one-shot key. Same store
+                // as BlockInput — do not invent a second flag. Persist the chord
+                // on that same backend field (do not inject keys).
+                backend.set_hotkey(cmd.hotkey);
+                backend.block_input(cmd.visible);
+            }
+
             WindowRequest::SetBlockingCursor(cmd) => {
                 // Shell (Electron) or CEF browser-host may set resize/hover cursors.
                 if role != PipeRole::Shell && role != PipeRole::Cef {
@@ -247,6 +252,7 @@ fn handle_window_event(
                     warn!(?role, "rejected UpdateSharedHandle — shell pipe only");
                     return false;
                 }
+                backend.note_shared_tex_opcode_17();
                 if let Err(err) = backend.update_surface(shared.handle) {
                     error!("failed to open shared surface. err: {:?}", err);
                     return false;
@@ -256,13 +262,14 @@ fn handle_window_event(
 
             WindowRequest::UpdateLayerHandle(shared) => {
                 if role != PipeRole::Cef {
-                    warn!(?role, layer = shared.layer, "rejected UpdateLayerHandle — cef pipe only");
+                    warn!(
+                        ?role,
+                        layer = shared.layer,
+                        "rejected UpdateLayerHandle — cef pipe only"
+                    );
                     return false;
                 }
-                if shared.layer == 0 {
-                    warn!("rejected UpdateLayerHandle layer 0 on cef pipe");
-                    return false;
-                }
+                backend.note_shared_tex_opcode_17();
                 if let Err(err) = backend.update_layer(shared.layer, shared.handle) {
                     error!("failed to open layer surface. err: {:?}", err);
                     return false;
@@ -292,6 +299,14 @@ fn handle_window_event(
                     return false;
                 }
                 backend.set_layer_input_rect(input.layer, input.rect);
+            }
+
+            WindowRequest::PaintCmd(cmd) => {
+                if role != PipeRole::Cef {
+                    warn!(?role, "rejected PaintCmd — cef pipe only");
+                    return false;
+                }
+                backend.apply_paint_cmd(&cmd);
             }
         }
 

@@ -5,18 +5,21 @@ use core::ffi::c_void;
 use anyhow::Context;
 use windows::{
     Win32::{
-        Foundation::{HWND, HMODULE},
+        Foundation::{HMODULE, HWND},
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_HARDWARE,
-            Direct3D11::{D3D11CreateDeviceAndSwapChain, D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION},
+            Direct3D11::{
+                D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11CreateDeviceAndSwapChain,
+            },
             Dxgi::{
-                Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_RATIONAL, DXGI_SAMPLE_DESC},
-                DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD,
-                DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                Common::{
+                    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_RATIONAL, DXGI_SAMPLE_DESC,
+                },
+                DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT,
             },
         },
     },
-    core::{Interface, HRESULT},
+    core::{HRESULT, Interface},
 };
 
 /// `IDXGISwapChain::Present` function pointer (slot 8 in the DXGI vtable).
@@ -35,8 +38,7 @@ pub fn resolve_dxgi_present_address() -> anyhow::Result<DxgiPresentFn> {
 
 /// Resolve both `Present` (slot 8) and `Present1` (slot 22) entry points.
 /// `Present1` is `None` when the swapchain does not implement `IDXGISwapChain1`.
-pub fn resolve_dxgi_present_addresses(
-) -> anyhow::Result<(DxgiPresentFn, Option<DxgiPresent1Fn>)> {
+pub fn resolve_dxgi_present_addresses() -> anyhow::Result<(DxgiPresentFn, Option<DxgiPresent1Fn>)> {
     unsafe {
         let mut swap_chain = None;
         let desc = DXGI_SWAP_CHAIN_DESC {
@@ -108,6 +110,9 @@ mod tests {
             return;
         };
         let ptr = present as usize;
-        assert!(ptr > 0x1000, "Present vtable slot should be a valid code pointer");
+        assert!(
+            ptr > 0x1000,
+            "Present vtable slot should be a valid code pointer"
+        );
     }
 }

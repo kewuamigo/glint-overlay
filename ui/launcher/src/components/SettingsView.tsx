@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { launcherInvoke } from '../launcher-bridge';
 import { CloudSyncSettings } from './CloudSyncSettings';
+import { UpdatesSettings } from './UpdatesSettings';
 
 type Props = {
   onRefresh: () => void;
@@ -64,6 +65,8 @@ export function SettingsView({
       <p className="page-eyebrow">Preferences</p>
       <h1 className="page-title">Settings</h1>
 
+      <UpdatesSettings />
+
       <CloudSyncSettings />
 
       <div className="settings-section glass" style={{ padding: 20, marginBottom: 16 }}>
@@ -77,7 +80,7 @@ export function SettingsView({
           onChange={(e) => setSteamGridDbApiKey(e.target.value)}
         />
         <p className="settings-hint">
-          Used for library covers (600×900 grids), same approach as{' '}
+          Used for library covers (600×900 grids) and home logos, same approach as{' '}
           <a
             href="https://github.com/cooperate/SteamGridDBMetadata"
             target="_blank"

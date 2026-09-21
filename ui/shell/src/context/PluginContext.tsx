@@ -56,6 +56,8 @@ export function createPluginApi(
       },
       metrics: {
         getSnapshot: () => invoke('native.metrics.getSnapshot', []),
+        getPrefs: () => invoke('native.metrics.getPrefs', []),
+        setPrefs: (prefs) => invoke('native.metrics.setPrefs', [prefs]),
       },
       window: {
         getSnapshot: () => invoke('native.window.getSnapshot', []),

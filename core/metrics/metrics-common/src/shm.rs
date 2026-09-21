@@ -2,18 +2,22 @@ use std::ptr::NonNull;
 use std::sync::OnceLock;
 
 use parking_lot::Mutex;
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::Memory::{
-    CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_READ, FILE_MAP_WRITE,
-    MEMORY_MAPPED_VIEW_ADDRESS, PAGE_READWRITE,
+    CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
+    PAGE_READWRITE, UnmapViewOfFile,
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::core::PCWSTR;
 
 use crate::counter::{FpsWindow, FrametimeTracker};
 
 const MAGIC: u32 = 0x474F564D; // GOVM
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
+
+pub const FG_KIND_NONE: u32 = 0;
+pub const FG_KIND_DLSS: u32 = 1;
+pub const FG_KIND_FSR: u32 = 2;
 
 pub fn shm_name_for_pid(pid: u32) -> String {
     format!("Local\\GlintMetrics-{pid}")
@@ -41,6 +45,8 @@ pub struct MetricsBlock {
     pub game_frame_fps: f32,
     pub game_frame_count: u64,
     pub game_frame_updated_at_ms: u64,
+    /// Steam FG latch: 0 off, 1 on. Kind lives in `fg_kind`.
+    pub fg_active: u32,
 }
 
 pub struct SharedMetrics {
@@ -61,7 +67,10 @@ impl SharedMetrics {
             let pid = unsafe { GetCurrentProcessId() };
             Self::open(&shm_name_for_pid(pid), true).unwrap_or_else(|err| {
                 eprintln!("[glint_metrics] shared metrics unavailable: {err}");
-                crate::log::debug_log("glint-metrics", &format!("shared metrics unavailable: {err}"));
+                crate::log::debug_log(
+                    "glint-metrics",
+                    &format!("shared metrics unavailable: {err}"),
+                );
                 Self::open(&format!("Local\\GlintMetrics-fallback-{pid}"), true)
                     .unwrap_or_else(|_| Self::noop())
             })
@@ -142,7 +151,18 @@ impl SharedMetrics {
 
     pub fn set_fg_kind(&self, fg_kind: u32) {
         self.write_block(|b| {
-            b.fg_kind = fg_kind;
+            if b.fg_active == 0 {
+                b.fg_kind = fg_kind;
+            }
+            b.fg_updated_at_ms = crate::counter::now_ms();
+        });
+    }
+
+    /// Steam kind dword from `slDLSSGSetOptions` / `ffxConfigure*` (`dword_180197870`).
+    pub fn set_fg_active(&self, kind: u32) {
+        self.write_block(|b| {
+            b.fg_active = if kind == 0 { 0 } else { 1 };
+            b.fg_kind = kind;
             b.fg_updated_at_ms = crate::counter::now_ms();
         });
     }
@@ -228,12 +248,111 @@ fn read_metrics_named(name: &str) -> Option<MetricsBlock> {
     }
 }
 
+/// Steam kind dword is on when `fg_active != 0` (v5+) or when `fg_kind` is DLSS/FSR.
+pub fn frame_gen_active(block: &MetricsBlock) -> bool {
+    if block.version >= 5 {
+        block.fg_active != 0
+    } else {
+        matches!(block.fg_kind, FG_KIND_DLSS | FG_KIND_FSR)
+    }
+}
+
+pub fn frame_gen_kind_label(fg_kind: u32) -> &'static str {
+    match fg_kind {
+        FG_KIND_DLSS => "dlss",
+        FG_KIND_FSR => "fsr",
+        3 => "xefg",
+        _ => "none",
+    }
+}
+
+/// Present FPS always; game FPS only when FG is on (single FPS when off).
+pub fn snapshot_fps(block: &MetricsBlock) -> (f64, Option<f64>) {
+    let present = f64::from(block.native_fps);
+    if !frame_gen_active(block) {
+        return (present, None);
+    }
+    let game = f64::from(block.game_frame_fps);
+    let game = if game > 0.0 && game.is_finite() {
+        Some(game)
+    } else {
+        None
+    };
+    (present, game)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn block(
+        version: u32,
+        native_fps: f32,
+        game_frame_fps: f32,
+        fg_kind: u32,
+        fg_active: u32,
+    ) -> MetricsBlock {
+        MetricsBlock {
+            magic: MAGIC,
+            version,
+            pid: 1,
+            native_fps,
+            native_frame_count: 0,
+            updated_at_ms: 0,
+            native_frame_time_ms: 0.0,
+            fg_kind,
+            fg_updated_at_ms: 0,
+            game_frame_fps,
+            game_frame_count: 0,
+            game_frame_updated_at_ms: 0,
+            fg_active,
+        }
+    }
+
     #[test]
     fn shm_name_for_pid_format() {
         assert_eq!(shm_name_for_pid(4242), "Local\\GlintMetrics-4242");
+    }
+
+    #[test]
+    fn v4_fields_stay_readable_after_v5_append() {
+        let b = block(5, 120.0, 60.0, FG_KIND_DLSS, 1);
+        assert_eq!(b.native_fps, 120.0);
+        assert_eq!(b.game_frame_fps, 60.0);
+        assert_eq!(b.fg_kind, FG_KIND_DLSS);
+        assert_eq!(b.fg_active, 1);
+        assert_eq!(std::mem::offset_of!(MetricsBlock, native_fps), 12);
+        assert_eq!(std::mem::offset_of!(MetricsBlock, fg_kind), 36);
+        assert_eq!(std::mem::offset_of!(MetricsBlock, game_frame_fps), 48);
+        assert_eq!(std::mem::offset_of!(MetricsBlock, fg_active), 72);
+    }
+
+    #[test]
+    fn frame_gen_on_uses_kind_dword_not_rate() {
+        let b = block(5, 60.0, 60.0, FG_KIND_DLSS, 1);
+        assert!(frame_gen_active(&b));
+        assert_eq!(snapshot_fps(&b), (60.0, Some(60.0)));
+    }
+
+    #[test]
+    fn frame_gen_off_is_single_present_fps() {
+        let b = block(5, 144.0, 72.0, FG_KIND_NONE, 0);
+        assert!(!frame_gen_active(&b));
+        assert_eq!(snapshot_fps(&b), (144.0, None));
+    }
+
+    #[test]
+    fn frame_gen_off_ignores_rate_ratio() {
+        let b = block(5, 60.0, 120.0, FG_KIND_NONE, 0);
+        assert!(!frame_gen_active(&b));
+        assert_eq!(snapshot_fps(&b), (60.0, None));
+    }
+
+    #[test]
+    fn fsr_on_splits_present_and_game() {
+        let b = block(5, 120.0, 60.0, FG_KIND_FSR, 1);
+        assert!(frame_gen_active(&b));
+        assert_eq!(frame_gen_kind_label(b.fg_kind), "fsr");
+        assert_eq!(snapshot_fps(&b), (120.0, Some(60.0)));
     }
 }

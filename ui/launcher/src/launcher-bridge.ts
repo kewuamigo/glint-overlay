@@ -4,6 +4,22 @@ export type GameArt = {
   icon?: string;
   grid?: string;
   hero?: string;
+  logo?: string;
+  iconMime?: string;
+  gridMime?: string;
+  heroMime?: string;
+  logoMime?: string;
+};
+
+export type ArtSlot = 'icon' | 'grid' | 'hero' | 'logo';
+
+export type SgdbAsset = {
+  id: number;
+  url: string;
+  thumb: string;
+  mime: string;
+  style: string;
+  animated: boolean;
 };
 
 export type ScannedGame = {
@@ -96,6 +112,64 @@ export type CloudSyncStatusResponse = {
   game?: GameSyncState;
 };
 
+export type OtaState =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'applying'
+  | 'error';
+
+export type OtaAvailable = {
+  version: string;
+  releaseUrl: string;
+  notes: string | null;
+  setupAsset: boolean;
+  checksumAsset: boolean;
+  portableAsset: boolean;
+  setupUrl: string | null;
+  checksumUrl: string | null;
+  portableUrl: string | null;
+};
+
+export type OtaDownloadProgress = {
+  received: number;
+  total: number | null;
+};
+
+export type OtaStatus = {
+  enabled: boolean;
+  currentVersion: string;
+  layout: 'inno' | 'portable';
+  autoCheck: boolean;
+  lastCheckAt: string | null;
+  lastError: string | null;
+  state: OtaState;
+  available: OtaAvailable | null;
+  dismissed: boolean;
+  applying: boolean;
+  download: OtaDownloadProgress | null;
+};
+
+/** Mirrors `@glint/achievements-core` PrepareState (UI has no package dep). */
+export type PrepareStatus = 'pending' | 'ready' | 'failed' | 'skipped';
+
+export type PrepareState = {
+  status: PrepareStatus;
+  error?: string;
+  steamAppId?: string;
+  updatedAt: number;
+};
+
+/** Same rule as achievements-core `prepareBlocksLaunch`. */
+export function prepareBlocksLaunch(
+  status: PrepareState | null | undefined,
+): boolean {
+  if (!status) return true;
+  return status.status === 'pending' || status.status === 'failed';
+}
+
 export type SyncRevisionInfo = {
   gameId: string;
   revisionId: string;
@@ -106,6 +180,7 @@ export type SyncRevisionInfo = {
 export type LauncherBridge = {
   invoke<T = unknown>(method: string, args?: unknown[]): Promise<T>;
   onSyncStatus?: (cb: (payload: SyncStatusPush) => void) => () => void;
+  onOtaStatus?: (cb: (payload: OtaStatus) => void) => () => void;
 };
 
 declare global {
@@ -129,4 +204,8 @@ export function onSyncStatus(
   cb: (payload: SyncStatusPush) => void,
 ): () => void {
   return window.__goLauncher?.onSyncStatus?.(cb) ?? (() => {});
+}
+
+export function onOtaStatus(cb: (payload: OtaStatus) => void): () => void {
+  return window.__goLauncher?.onOtaStatus?.(cb) ?? (() => {});
 }

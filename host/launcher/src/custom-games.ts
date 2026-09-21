@@ -1,3 +1,4 @@
+import { gameRootFromExe } from '@glint/achievements-core';
 import {
   getAllPlaytimeSeconds,
   getDb,
@@ -52,12 +53,12 @@ export function clearCustomGames(): void {
   softDeleteAllCustomGames();
 }
 
-export function addCustomGame(_name: string, executable: string): CustomGame {
+export function addCustomGame(name: string, executable: string): CustomGame {
   const trimmedExe = executable.trim();
   if (!trimmedExe) {
     throw new Error('executable is required');
   }
-  const trimmedName = titleFromExePath(trimmedExe);
+  const trimmedName = name.trim() || titleFromExePath(trimmedExe);
   getDb();
   const entry = insertCustomGame(trimmedName, trimmedExe);
   return { name: entry.name, executable: entry.executable };
@@ -121,9 +122,7 @@ export function mergeCustomGames(
       name: custom.name,
       source: 'custom',
       exe: custom.executable,
-      install_path: hasPath
-        ? custom.executable.replace(/[/\\][^/\\]+$/, '')
-        : '',
+      install_path: hasPath ? gameRootFromExe(custom.executable) : '',
       running: false,
       playtime_hours: null,
     });

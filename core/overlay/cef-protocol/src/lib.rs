@@ -37,9 +37,7 @@ mod tests {
         let original = Envelope {
             protocol_version: PROTOCOL_VERSION as i32,
             correlation_id: 0,
-            body: Some(Body::Ready(Ready {
-                chrome_top_px: 130,
-            })),
+            body: Some(Body::Ready(Ready { chrome_top_px: 130 })),
         };
         let bytes = encode_envelope(&original).expect("encode");
         let decoded = decode_envelope(&bytes).expect("decode");

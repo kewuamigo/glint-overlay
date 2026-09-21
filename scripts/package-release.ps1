@@ -132,6 +132,7 @@ $requiredNative = @(
     "glint-browser.exe",
     "glint_overlay-x64.dll",
     "glint_metrics_native.dll",
+    "glint_achievements_native.dll",
     "glint-metrics-etw.exe"
 )
 foreach ($name in $requiredNative) {
@@ -277,6 +278,18 @@ $sharedSrc = Join-Path $RepoRoot "host\cef\plugin-shared"
 if (-not (Test-Path $sharedSrc)) { throw "Missing $sharedSrc" }
 Copy-Tree -Src $sharedSrc -Dest (Join-Path $Payload "host\cef\plugin-shared")
 
+# Bake product version for OTA comparison (UTF-8, no BOM — JSON.parse).
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+$versionJsonBody = "{`"version`":`"$Version`"}"
+$versionJsonPaths = @(
+    (Join-Path $Payload "version.json"),
+    (Join-Path $LauncherHost "version.json")
+)
+foreach ($vp in $versionJsonPaths) {
+    [System.IO.File]::WriteAllText($vp, $versionJsonBody, $utf8NoBom)
+    Write-Host "    version.json -> $vp" -ForegroundColor DarkGray
+}
+
 Write-Host "Payload staged at $Payload" -ForegroundColor Green
 
 $OutDir = Join-Path $RepoRoot "dist\release"
@@ -300,7 +313,13 @@ if (-not $SkipInno) {
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
         $setup = Join-Path $OutDir "Glint-Setup-$Version.exe"
         if (-not (Test-Path $setup)) { throw "Expected installer missing: $setup" }
+        $shaHex = (Get-FileHash -Algorithm SHA256 -Path $setup).Hash.ToLowerInvariant()
+        $shaName = "Glint-Setup-$Version.exe.sha256"
+        $shaPath = Join-Path $OutDir $shaName
+        $shaLine = "$shaHex  Glint-Setup-$Version.exe`n"
+        [System.IO.File]::WriteAllText($shaPath, $shaLine, $utf8NoBom)
         Write-Host "Installer: $setup" -ForegroundColor Green
+        Write-Host "Checksum:  $shaPath" -ForegroundColor Green
     }
 }
 

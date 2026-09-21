@@ -419,6 +419,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "glint-achievements-native"
+version = "0.1.0"
+dependencies = [
+ "minhook-sys",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "glint-browser"
 version = "0.1.0"
 dependencies = [
@@ -605,6 +614,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "glint-overlay-client",
  "glint-overlay-common",
  "glint-overlay-core",
  "glint-overlay-event",

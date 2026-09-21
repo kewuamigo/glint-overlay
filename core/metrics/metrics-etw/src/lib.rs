@@ -5,4 +5,6 @@ mod consumer;
 mod fps;
 
 pub use consumer::EtwMetricsConsumer;
-pub use fps::{EventCounters, FrameGenKind, HardwareFpsTracker, HookedNativeSample, MetricsSnapshot};
+pub use fps::{
+    EventCounters, FrameGenKind, HardwareFpsTracker, HookedNativeSample, MetricsSnapshot,
+};

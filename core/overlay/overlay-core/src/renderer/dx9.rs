@@ -21,7 +21,10 @@ use windows::Win32::{
     },
 };
 
-use crate::{surface::OverlaySurface, util::with_keyed_mutex};
+use crate::{
+    surface::OverlaySurface,
+    util::{MailboxSample, mailbox_sample, with_keyed_mutex_sampled},
+};
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -49,6 +52,7 @@ pub struct Dx9Renderer {
     size: (u32, u32),
 
     texture: Option<Dx9Texture>,
+    has_cache: bool,
     vertex_buffer: IDirect3DVertexBuffer9,
     state_block: IDirect3DStateBlock9,
 }
@@ -73,6 +77,7 @@ impl Dx9Renderer {
                 size: (0, 0),
 
                 texture: None,
+                has_cache: false,
                 vertex_buffer,
                 state_block,
             })
@@ -82,6 +87,7 @@ impl Dx9Renderer {
     #[inline]
     pub fn reset_texture(&mut self) {
         self.texture.take();
+        self.has_cache = false;
     }
 
     pub fn update_texture(
@@ -123,42 +129,56 @@ impl Dx9Renderer {
             }
         };
 
-        match *texture {
+        let has_cache = self.has_cache;
+        let copied = match *texture {
             Dx9Texture::SharedTexture(_, ref d3d11_texture) => {
-                with_keyed_mutex(mutex, || unsafe {
-                    d3d11_cx.CopyResource(d3d11_texture, src_texture);
-                    d3d11_cx.Flush();
-                })?;
+                with_keyed_mutex_sampled(mutex, |lock_held| {
+                    if mailbox_sample(lock_held, has_cache) != MailboxSample::Live {
+                        return false;
+                    }
+                    unsafe {
+                        d3d11_cx.CopyResource(d3d11_texture, src_texture);
+                        d3d11_cx.Flush();
+                    }
+                    true
+                })?
             }
 
             Dx9Texture::Fallback(ref texture, ref staging) => {
-                with_keyed_mutex(mutex, || {
-                    unsafe { d3d11_cx.CopyResource(staging, src_texture) };
-                })?;
-
-                let mut rect = D3DLOCKED_RECT::default();
-                unsafe {
-                    let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                    d3d11_cx.Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-                    texture.LockRect(0, &mut rect, ptr::null(), D3DLOCK_DISCARD as _)?;
-                    defer!({
-                        d3d11_cx.Unmap(staging, 0);
-                        _ = texture.UnlockRect(0);
-                    });
-
-                    for y in 0..size.1 as isize {
-                        let line_size = size.0 as usize * dxgi_pixel_size(format);
-                        let src_offset = y * mapped.RowPitch as isize;
-                        let dest_offset = y * rect.Pitch as isize;
-
-                        copy_nonoverlapping(
-                            mapped.pData.cast::<u8>().byte_offset(src_offset),
-                            rect.pBits.cast::<u8>().byte_offset(dest_offset),
-                            line_size,
-                        );
+                with_keyed_mutex_sampled(mutex, |lock_held| -> anyhow::Result<bool> {
+                    if mailbox_sample(lock_held, has_cache) != MailboxSample::Live {
+                        return Ok(false);
                     }
-                }
+                    unsafe { d3d11_cx.CopyResource(staging, src_texture) };
+                    let mut rect = D3DLOCKED_RECT::default();
+                    unsafe {
+                        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+                        d3d11_cx.Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+                        texture.LockRect(0, &mut rect, ptr::null(), D3DLOCK_DISCARD as _)?;
+                        defer!({
+                            d3d11_cx.Unmap(staging, 0);
+                            _ = texture.UnlockRect(0);
+                        });
+
+                        for y in 0..size.1 as isize {
+                            let line_size = size.0 as usize * dxgi_pixel_size(format);
+                            let src_offset = y * mapped.RowPitch as isize;
+                            let dest_offset = y * rect.Pitch as isize;
+
+                            copy_nonoverlapping(
+                                mapped.pData.cast::<u8>().byte_offset(src_offset),
+                                rect.pBits.cast::<u8>().byte_offset(dest_offset),
+                                line_size,
+                            );
+                        }
+                    }
+                    Ok(true)
+                })?
+                .transpose()?
             }
+        };
+        if copied == Some(true) {
+            self.has_cache = true;
         }
 
         Ok(())
@@ -171,7 +191,7 @@ impl Dx9Renderer {
         position: (i32, i32),
         screen: (u32, u32),
     ) -> anyhow::Result<()> {
-        if screen.0 == 0 || screen.1 == 0 {
+        if screen.0 == 0 || screen.1 == 0 || !self.has_cache {
             return Ok(());
         }
 

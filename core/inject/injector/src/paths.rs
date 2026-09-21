@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use glint_overlay_client::paths::overlay_dll_marker;
 
 /// Marker file used to identify the monorepo root (no Electron overlay build needed).

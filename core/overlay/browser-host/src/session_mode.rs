@@ -72,9 +72,6 @@ mod tests {
 
     #[test]
     fn hidden_plus_first_pin_goes_hud_pinned() {
-        assert_eq!(
-            next_mode(SessionMode::Hidden, true),
-            SessionMode::HudPinned
-        );
+        assert_eq!(next_mode(SessionMode::Hidden, true), SessionMode::HudPinned);
     }
 }

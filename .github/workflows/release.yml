@@ -58,4 +58,5 @@ jobs:
           generate_release_notes: true
           files: |
             dist/release/Glint-Setup-${{ steps.ver.outputs.version }}.exe
+            dist/release/Glint-Setup-${{ steps.ver.outputs.version }}.exe.sha256
             dist/release/Glint-portable-${{ steps.ver.outputs.version }}.zip

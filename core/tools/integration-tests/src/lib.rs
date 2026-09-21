@@ -9,7 +9,7 @@ use anyhow::Context;
 use glint_injector::{
     overlay_dll_paths, overlay_dll_ref, require_overlay_dll_dir, spinning_cube_path,
 };
-use glint_overlay_client::{inject, IpcClientConn, IpcClientEventStream};
+use glint_overlay_client::{IpcClientConn, IpcClientEventStream, inject};
 
 pub use glint_injector::OverlayDllPaths;
 
@@ -38,8 +38,12 @@ pub fn spawn_spinning_cube() -> anyhow::Result<(SpinningCubeProcess, u32)> {
 }
 
 /// Inject overlay into a running SpinningCube process; returns RAII process + IPC handles.
-pub async fn attach_spinning_cube_overlay(
-) -> anyhow::Result<(SpinningCubeProcess, u32, IpcClientConn, IpcClientEventStream)> {
+pub async fn attach_spinning_cube_overlay() -> anyhow::Result<(
+    SpinningCubeProcess,
+    u32,
+    IpcClientConn,
+    IpcClientEventStream,
+)> {
     let dll_dir = require_overlay_dll_dir()?;
     let dll_paths = overlay_dll_paths(&dll_dir);
     let (proc, pid) = spawn_spinning_cube()?;
@@ -86,11 +90,12 @@ pub async fn wait_for_window_added(
         match tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
             Ok(Some(OverlayEvent::Window {
                 id,
-                event: WindowEvent::Added {
-                    width,
-                    height,
-                    gpu_id,
-                },
+                event:
+                    WindowEvent::Added {
+                        width,
+                        height,
+                        gpu_id,
+                    },
             })) if width > 0 && height > 0 => {
                 return Ok((id, width, height, gpu_id));
             }
@@ -106,7 +111,7 @@ pub async fn wait_for_window_added(
 pub fn resize_game_window(hwnd: u32, width: i32, height: i32) -> anyhow::Result<()> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos,
     };
 
     if width <= 0 || height <= 0 {

@@ -14,6 +14,7 @@ use crate::{interop::DxInterop, surface::OverlaySurface};
 pub enum Renderer {
     Dx12,
     Dx11,
+    Dx10,
     Dx9,
     Opengl,
     Vulkan,
@@ -54,6 +55,27 @@ pub struct RenderData {
     pub layer0_pos_pct: Option<(PercentLength, PercentLength)>,
     /// Optional hit-test rect for layer 0 from `SetLayerInputRect`.
     pub layer0_input_rect: Option<LayerInputRect>,
+}
+
+/// Opcode 29 dest apply used by `WindowBackend::apply_paint_cmd`.
+/// Writes `pos_pct` only. Must not replace `LayerState.surface`.
+/// Returns whether dest changed (caller should `invalidate_layout`).
+pub(crate) fn apply_chrome_dest(
+    layers: &mut HashMap<u32, LayerState>,
+    buffer_id: u32,
+    x: f32,
+    y: f32,
+) -> bool {
+    if buffer_id == 0 {
+        return false;
+    }
+    let dest = (PercentLength::Length(x), PercentLength::Length(y));
+    let state = layers.entry(buffer_id).or_insert_with(LayerState::new);
+    if state.pos_pct == Some(dest) {
+        return false;
+    }
+    state.pos_pct = Some(dest);
+    true
 }
 
 impl RenderData {
@@ -102,12 +124,7 @@ impl RenderData {
         Ok(())
     }
 
-    pub fn set_layer_position_pct(
-        &mut self,
-        layer: u32,
-        x: PercentLength,
-        y: PercentLength,
-    ) {
+    pub fn set_layer_position_pct(&mut self, layer: u32, x: PercentLength, y: PercentLength) {
         if layer == 0 {
             self.layer0_pos_pct = Some((x, y));
         } else {
@@ -131,6 +148,11 @@ impl RenderData {
 
     pub fn invalidate_surface(&mut self) {
         self.surface.updated = true;
+    }
+
+    pub fn has_pending_mailbox(&self) -> bool {
+        self.surface.has_pending_update()
+            || self.layers.values().any(|l| l.surface.has_pending_update())
     }
 
     /// Layers with a live surface, ascending key order (higher drawn on top).
@@ -221,7 +243,13 @@ impl RenderData {
                 r.height,
             )
         } else {
-            (layer, position.0, position.1, texture_size.0, texture_size.1)
+            (
+                layer,
+                position.0,
+                position.1,
+                texture_size.0,
+                texture_size.1,
+            )
         }
     }
 }
@@ -242,6 +270,11 @@ impl SurfaceState {
     #[inline]
     pub const fn get(&self) -> Option<&OverlaySurface> {
         self.inner.as_ref()
+    }
+
+    #[inline]
+    pub const fn has_pending_update(&self) -> bool {
+        self.updated
     }
 
     fn update(&mut self, device: &ID3D11Device, handle: Option<NonZeroU32>) -> anyhow::Result<()> {
@@ -276,5 +309,122 @@ impl SurfaceState {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LayerState, SurfaceState, apply_chrome_dest};
+    use crate::paint_cmd::{PaintAction, PaintInterpreter};
+    use glint_overlay_common::paint_cmd::PaintCmd;
+    use glint_overlay_common::size::PercentLength;
+    use std::collections::HashMap;
+
+    #[test]
+    fn no_new_handle_on_second_take() {
+        let mut surface = SurfaceState::new();
+        assert!(surface.take_update().is_some());
+        assert!(surface.take_update().is_none());
+    }
+
+    /// Dest-only opcode 29 (no 17): last mailbox snapshot stays; dest moves.
+    #[test]
+    fn dest_only_opcode_29_keeps_snapshot_and_moves() {
+        let mut interp = PaintInterpreter::new();
+        let r = interp.interpret(
+            &PaintCmd::DrawChromePaintBufferRect {
+                buffer_id: 1,
+                x: 40.0,
+                y: 80.0,
+                width: 200.0,
+                height: 100.0,
+            },
+            None,
+        );
+        let PaintAction::ChromeDest {
+            buffer_id, x, y, ..
+        } = r.action
+        else {
+            panic!(
+                "opcode 29 without 17 must be ChromeDest, not {:?}",
+                r.action
+            );
+        };
+        assert_eq!(buffer_id, 1);
+
+        let mut layers = HashMap::new();
+        let mut seeded = LayerState::new();
+        seeded.pos_pct = Some((PercentLength::Length(10.0), PercentLength::Length(20.0)));
+        seeded.position = (10, 20);
+        assert!(seeded.surface.take_update().is_some());
+        assert!(!seeded.surface.has_pending_update());
+        layers.insert(buffer_id as u32, seeded);
+
+        apply_chrome_dest(&mut layers, buffer_id as u32, x, y);
+
+        let window_size = (1920u32, 1080u32);
+        let layer = layers.get_mut(&(buffer_id as u32)).expect("layer 1");
+        if let Some((px, py)) = layer.pos_pct {
+            layer.position = (
+                px.resolve(window_size.0 as f32).round() as i32,
+                py.resolve(window_size.1 as f32).round() as i32,
+            );
+        }
+
+        let layer = layers.get(&(buffer_id as u32)).expect("layer 1");
+        assert!(
+            !layer.surface.has_pending_update(),
+            "dest must not replace last mailbox snapshot"
+        );
+        assert_eq!(
+            layer.pos_pct,
+            Some((PercentLength::Length(40.0), PercentLength::Length(80.0)))
+        );
+        assert_eq!(layer.position, (40, 80));
+    }
+
+    /// Promo chrome (layer ≥2) uses the same dest-only 29 path as content.
+    #[test]
+    fn dest_only_opcode_29_keeps_cropped_promo_snapshot() {
+        let mut interp = PaintInterpreter::new();
+        let r = interp.interpret(
+            &PaintCmd::DrawChromePaintBufferRect {
+                buffer_id: 2,
+                x: 120.0,
+                y: 60.0,
+                width: 400.0,
+                height: 300.0,
+            },
+            None,
+        );
+        let PaintAction::ChromeDest {
+            buffer_id, x, y, ..
+        } = r.action
+        else {
+            panic!(
+                "opcode 29 without 17 must be ChromeDest, not {:?}",
+                r.action
+            );
+        };
+        assert_eq!(buffer_id, 2);
+
+        let mut layers = HashMap::new();
+        let mut seeded = LayerState::new();
+        seeded.pos_pct = Some((PercentLength::Length(10.0), PercentLength::Length(20.0)));
+        assert!(seeded.surface.take_update().is_some());
+        assert!(!seeded.surface.has_pending_update());
+        layers.insert(buffer_id as u32, seeded);
+
+        apply_chrome_dest(&mut layers, buffer_id as u32, x, y);
+
+        let layer = layers.get(&(buffer_id as u32)).expect("promo layer 2");
+        assert!(
+            !layer.surface.has_pending_update(),
+            "dest must not replace the cropped snapshot"
+        );
+        assert_eq!(
+            layer.pos_pct,
+            Some((PercentLength::Length(120.0), PercentLength::Length(60.0)))
+        );
     }
 }

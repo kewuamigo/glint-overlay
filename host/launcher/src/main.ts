@@ -3,6 +3,7 @@ import { app, BrowserWindow, Menu } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { migrateAppDataFromGameOverlay } from './appdata-migrate.js';
 import { registerLauncherIpc, setLauncherWindow } from './ipc-handlers.js';
+import { scheduleOtaStartupCheck } from './ota.js';
 import { APP_DATA_DIR_NAME, PRODUCT_NAME } from './product.js';
 import { getLauncherUiUrl, startLauncherUiServer } from './ui-server.js';
 
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
   }
 
   await createWindow();
+  scheduleOtaStartupCheck();
 
   app.on('window-all-closed', () => {
     app.quit();

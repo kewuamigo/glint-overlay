@@ -1,7 +1,7 @@
 //! Common types and utilities for IPC communication between the overlay client and server.
 
-use glint_overlay_event::OverlayEvent;
 use bincode::{Decode, Encode};
+use glint_overlay_event::OverlayEvent;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::request::Request;
@@ -34,7 +34,8 @@ pub fn cef_pipe_from_shell(shell_pipe: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{BlockInput, Request, WindowRequest};
+    use crate::paint_cmd::PaintCmd;
+    use crate::request::{BlockInput, HotKeyAndVisibility, HotkeyChord, Request, WindowRequest};
 
     #[test]
     fn ipc_addr_format() {
@@ -67,6 +68,63 @@ mod tests {
                 request: WindowRequest::BlockInput(BlockInput { block: true })
             }
         ));
+    }
+
+    #[test]
+    fn hotkey_and_visibility_bincode_roundtrip() {
+        let original = HotKeyAndVisibility {
+            visible: true,
+            hotkey: HotkeyChord {
+                vk: 0x09,
+                modifiers: 0x0001,
+            },
+        };
+        let req = Request::Window {
+            id: 3,
+            request: WindowRequest::HotKeyAndVisibility(original.clone()),
+        };
+        let bytes = bincode::encode_to_vec(&req, bincode::config::standard()).unwrap();
+        let (decoded, len): (Request, usize) =
+            bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(len, bytes.len());
+        match decoded {
+            Request::Window {
+                id: 3,
+                request: WindowRequest::HotKeyAndVisibility(got),
+            } => assert_eq!(got, original),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn paint_cmd_chrome_bincode_roundtrip() {
+        let original = PaintCmd::DrawChromePaintBufferRect {
+            buffer_id: 1,
+            x: 8.0,
+            y: 16.0,
+            width: 320.0,
+            height: 240.0,
+        };
+        let req = Request::Window {
+            id: 1,
+            request: WindowRequest::PaintCmd(original.clone()),
+        };
+        let bytes = bincode::encode_to_vec(&req, bincode::config::standard()).unwrap();
+        let (decoded, len): (Request, usize) =
+            bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(len, bytes.len());
+        match decoded {
+            Request::Window {
+                id: 1,
+                request: WindowRequest::PaintCmd(got),
+            } => assert_eq!(got, original),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_shared_handle_is_opcode_17() {
+        assert_eq!(PaintCmd::DrawAndUpdateSharedTexture.opcode(), 17);
     }
 }
 

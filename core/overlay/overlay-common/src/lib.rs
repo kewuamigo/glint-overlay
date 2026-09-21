@@ -3,6 +3,7 @@
 
 pub mod cursor;
 pub mod ipc;
+pub mod paint_cmd;
 pub mod product;
 pub mod request;
 pub mod size;

@@ -11,17 +11,21 @@
 #endif
 #include <windows.h>
 
+#include "shared_tex.h"
+
 #include <functional>
 #include <mutex>
 #include <string>
+#include <vector>
 
 class IpcClient;
 
 enum class OsrRole { Chrome, Content };
 
-/** Accelerated paint → host compositor (role, handle, w, h). */
+/** Accelerated paint → host compositor (role, handle, view size, dirty rects). */
 using OsrPaintFn = std::function<void(OsrRole role, HANDLE shared_handle, uint32_t w,
-                                      uint32_t h)>;
+                                      uint32_t h, const SharedDirtyRect* dirty,
+                                      size_t dirty_n)>;
 /** Chrome UI process messages (goBrowser JSON). */
 using OsrChromeMsgFn = std::function<void(const std::string& json)>;
 /** Content navState JSON (also mirrored into chrome UI by BrowserApp). */

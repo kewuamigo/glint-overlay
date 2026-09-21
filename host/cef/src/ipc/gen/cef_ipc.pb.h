@@ -57,6 +57,9 @@ extern BridgePushDefaultTypeInternal _BridgePush_default_instance_;
 class BridgeResult;
 struct BridgeResultDefaultTypeInternal;
 extern BridgeResultDefaultTypeInternal _BridgeResult_default_instance_;
+class CloseExtensionSatellite;
+struct CloseExtensionSatelliteDefaultTypeInternal;
+extern CloseExtensionSatelliteDefaultTypeInternal _CloseExtensionSatellite_default_instance_;
 class ContentNavigate;
 struct ContentNavigateDefaultTypeInternal;
 extern ContentNavigateDefaultTypeInternal _ContentNavigate_default_instance_;
@@ -96,6 +99,9 @@ extern NavStateDefaultTypeInternal _NavState_default_instance_;
 class Navigate;
 struct NavigateDefaultTypeInternal;
 extern NavigateDefaultTypeInternal _Navigate_default_instance_;
+class OpenExtensionSatellite;
+struct OpenExtensionSatelliteDefaultTypeInternal;
+extern OpenExtensionSatelliteDefaultTypeInternal _OpenExtensionSatellite_default_instance_;
 class Paint;
 struct PaintDefaultTypeInternal;
 extern PaintDefaultTypeInternal _Paint_default_instance_;
@@ -135,6 +141,7 @@ PROTOBUF_NAMESPACE_OPEN
 template<> ::gameoverlay::cef::BridgeInvoke* Arena::CreateMaybeMessage<::gameoverlay::cef::BridgeInvoke>(Arena*);
 template<> ::gameoverlay::cef::BridgePush* Arena::CreateMaybeMessage<::gameoverlay::cef::BridgePush>(Arena*);
 template<> ::gameoverlay::cef::BridgeResult* Arena::CreateMaybeMessage<::gameoverlay::cef::BridgeResult>(Arena*);
+template<> ::gameoverlay::cef::CloseExtensionSatellite* Arena::CreateMaybeMessage<::gameoverlay::cef::CloseExtensionSatellite>(Arena*);
 template<> ::gameoverlay::cef::ContentNavigate* Arena::CreateMaybeMessage<::gameoverlay::cef::ContentNavigate>(Arena*);
 template<> ::gameoverlay::cef::CreateSession* Arena::CreateMaybeMessage<::gameoverlay::cef::CreateSession>(Arena*);
 template<> ::gameoverlay::cef::Envelope* Arena::CreateMaybeMessage<::gameoverlay::cef::Envelope>(Arena*);
@@ -148,6 +155,7 @@ template<> ::gameoverlay::cef::KeyEvent* Arena::CreateMaybeMessage<::gameoverlay
 template<> ::gameoverlay::cef::MouseEvent* Arena::CreateMaybeMessage<::gameoverlay::cef::MouseEvent>(Arena*);
 template<> ::gameoverlay::cef::NavState* Arena::CreateMaybeMessage<::gameoverlay::cef::NavState>(Arena*);
 template<> ::gameoverlay::cef::Navigate* Arena::CreateMaybeMessage<::gameoverlay::cef::Navigate>(Arena*);
+template<> ::gameoverlay::cef::OpenExtensionSatellite* Arena::CreateMaybeMessage<::gameoverlay::cef::OpenExtensionSatellite>(Arena*);
 template<> ::gameoverlay::cef::Paint* Arena::CreateMaybeMessage<::gameoverlay::cef::Paint>(Arena*);
 template<> ::gameoverlay::cef::PaintError* Arena::CreateMaybeMessage<::gameoverlay::cef::PaintError>(Arena*);
 template<> ::gameoverlay::cef::Ready* Arena::CreateMaybeMessage<::gameoverlay::cef::Ready>(Arena*);
@@ -350,6 +358,32 @@ inline bool HostUiActionKind_Parse(
   return ::PROTOBUF_NAMESPACE_ID::internal::ParseNamedEnum<HostUiActionKind>(
     HostUiActionKind_descriptor(), name, value);
 }
+enum ExtensionSatelliteKind : int {
+  EXTENSION_SATELLITE_KIND_UNSPECIFIED = 0,
+  EXTENSION_SATELLITE_KIND_OPTIONS = 1,
+  EXTENSION_SATELLITE_KIND_POPUP = 2,
+  ExtensionSatelliteKind_INT_MIN_SENTINEL_DO_NOT_USE_ = std::numeric_limits<int32_t>::min(),
+  ExtensionSatelliteKind_INT_MAX_SENTINEL_DO_NOT_USE_ = std::numeric_limits<int32_t>::max()
+};
+bool ExtensionSatelliteKind_IsValid(int value);
+constexpr ExtensionSatelliteKind ExtensionSatelliteKind_MIN = EXTENSION_SATELLITE_KIND_UNSPECIFIED;
+constexpr ExtensionSatelliteKind ExtensionSatelliteKind_MAX = EXTENSION_SATELLITE_KIND_POPUP;
+constexpr int ExtensionSatelliteKind_ARRAYSIZE = ExtensionSatelliteKind_MAX + 1;
+
+const ::PROTOBUF_NAMESPACE_ID::EnumDescriptor* ExtensionSatelliteKind_descriptor();
+template<typename T>
+inline const std::string& ExtensionSatelliteKind_Name(T enum_t_value) {
+  static_assert(::std::is_same<T, ExtensionSatelliteKind>::value ||
+    ::std::is_integral<T>::value,
+    "Incorrect type passed to function ExtensionSatelliteKind_Name.");
+  return ::PROTOBUF_NAMESPACE_ID::internal::NameOfEnum(
+    ExtensionSatelliteKind_descriptor(), enum_t_value);
+}
+inline bool ExtensionSatelliteKind_Parse(
+    ::PROTOBUF_NAMESPACE_ID::ConstStringParam name, ExtensionSatelliteKind* value) {
+  return ::PROTOBUF_NAMESPACE_ID::internal::ParseNamedEnum<ExtensionSatelliteKind>(
+    ExtensionSatelliteKind_descriptor(), name, value);
+}
 // ===================================================================
 
 class Envelope final :
@@ -413,6 +447,8 @@ class Envelope final :
     kBridgeResult = 31,
     kBridgePush = 32,
     kSetContentRect = 33,
+    kOpenExtensionSatellite = 34,
+    kCloseExtensionSatellite = 35,
     kKeyEvent = 40,
     kMouseEvent = 41,
     kWheelEvent = 42,
@@ -522,6 +558,8 @@ class Envelope final :
     kBridgeResultFieldNumber = 31,
     kBridgePushFieldNumber = 32,
     kSetContentRectFieldNumber = 33,
+    kOpenExtensionSatelliteFieldNumber = 34,
+    kCloseExtensionSatelliteFieldNumber = 35,
     kKeyEventFieldNumber = 40,
     kMouseEventFieldNumber = 41,
     kWheelEventFieldNumber = 42,
@@ -856,6 +894,42 @@ class Envelope final :
       ::gameoverlay::cef::SetContentRect* set_content_rect);
   ::gameoverlay::cef::SetContentRect* unsafe_arena_release_set_content_rect();
 
+  // .gameoverlay.cef.OpenExtensionSatellite open_extension_satellite = 34;
+  bool has_open_extension_satellite() const;
+  private:
+  bool _internal_has_open_extension_satellite() const;
+  public:
+  void clear_open_extension_satellite();
+  const ::gameoverlay::cef::OpenExtensionSatellite& open_extension_satellite() const;
+  PROTOBUF_NODISCARD ::gameoverlay::cef::OpenExtensionSatellite* release_open_extension_satellite();
+  ::gameoverlay::cef::OpenExtensionSatellite* mutable_open_extension_satellite();
+  void set_allocated_open_extension_satellite(::gameoverlay::cef::OpenExtensionSatellite* open_extension_satellite);
+  private:
+  const ::gameoverlay::cef::OpenExtensionSatellite& _internal_open_extension_satellite() const;
+  ::gameoverlay::cef::OpenExtensionSatellite* _internal_mutable_open_extension_satellite();
+  public:
+  void unsafe_arena_set_allocated_open_extension_satellite(
+      ::gameoverlay::cef::OpenExtensionSatellite* open_extension_satellite);
+  ::gameoverlay::cef::OpenExtensionSatellite* unsafe_arena_release_open_extension_satellite();
+
+  // .gameoverlay.cef.CloseExtensionSatellite close_extension_satellite = 35;
+  bool has_close_extension_satellite() const;
+  private:
+  bool _internal_has_close_extension_satellite() const;
+  public:
+  void clear_close_extension_satellite();
+  const ::gameoverlay::cef::CloseExtensionSatellite& close_extension_satellite() const;
+  PROTOBUF_NODISCARD ::gameoverlay::cef::CloseExtensionSatellite* release_close_extension_satellite();
+  ::gameoverlay::cef::CloseExtensionSatellite* mutable_close_extension_satellite();
+  void set_allocated_close_extension_satellite(::gameoverlay::cef::CloseExtensionSatellite* close_extension_satellite);
+  private:
+  const ::gameoverlay::cef::CloseExtensionSatellite& _internal_close_extension_satellite() const;
+  ::gameoverlay::cef::CloseExtensionSatellite* _internal_mutable_close_extension_satellite();
+  public:
+  void unsafe_arena_set_allocated_close_extension_satellite(
+      ::gameoverlay::cef::CloseExtensionSatellite* close_extension_satellite);
+  ::gameoverlay::cef::CloseExtensionSatellite* unsafe_arena_release_close_extension_satellite();
+
   // .gameoverlay.cef.KeyEvent key_event = 40;
   bool has_key_event() const;
   private:
@@ -1040,6 +1114,8 @@ class Envelope final :
   void set_has_bridge_result();
   void set_has_bridge_push();
   void set_has_set_content_rect();
+  void set_has_open_extension_satellite();
+  void set_has_close_extension_satellite();
   void set_has_key_event();
   void set_has_mouse_event();
   void set_has_wheel_event();
@@ -1079,6 +1155,8 @@ class Envelope final :
       ::gameoverlay::cef::BridgeResult* bridge_result_;
       ::gameoverlay::cef::BridgePush* bridge_push_;
       ::gameoverlay::cef::SetContentRect* set_content_rect_;
+      ::gameoverlay::cef::OpenExtensionSatellite* open_extension_satellite_;
+      ::gameoverlay::cef::CloseExtensionSatellite* close_extension_satellite_;
       ::gameoverlay::cef::KeyEvent* key_event_;
       ::gameoverlay::cef::MouseEvent* mouse_event_;
       ::gameoverlay::cef::WheelEvent* wheel_event_;
@@ -3358,6 +3436,288 @@ class Reload final :
 };
 // -------------------------------------------------------------------
 
+class OpenExtensionSatellite final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:gameoverlay.cef.OpenExtensionSatellite) */ {
+ public:
+  inline OpenExtensionSatellite() : OpenExtensionSatellite(nullptr) {}
+  ~OpenExtensionSatellite() override;
+  explicit PROTOBUF_CONSTEXPR OpenExtensionSatellite(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  OpenExtensionSatellite(const OpenExtensionSatellite& from);
+  OpenExtensionSatellite(OpenExtensionSatellite&& from) noexcept
+    : OpenExtensionSatellite() {
+    *this = ::std::move(from);
+  }
+
+  inline OpenExtensionSatellite& operator=(const OpenExtensionSatellite& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline OpenExtensionSatellite& operator=(OpenExtensionSatellite&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const OpenExtensionSatellite& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const OpenExtensionSatellite* internal_default_instance() {
+    return reinterpret_cast<const OpenExtensionSatellite*>(
+               &_OpenExtensionSatellite_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    16;
+
+  friend void swap(OpenExtensionSatellite& a, OpenExtensionSatellite& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(OpenExtensionSatellite* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(OpenExtensionSatellite* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  OpenExtensionSatellite* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<OpenExtensionSatellite>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const OpenExtensionSatellite& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const OpenExtensionSatellite& from) {
+    OpenExtensionSatellite::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(OpenExtensionSatellite* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "gameoverlay.cef.OpenExtensionSatellite";
+  }
+  protected:
+  explicit OpenExtensionSatellite(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kExtensionIdFieldNumber = 1,
+    kKindFieldNumber = 2,
+  };
+  // string extension_id = 1;
+  void clear_extension_id();
+  const std::string& extension_id() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_extension_id(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_extension_id();
+  PROTOBUF_NODISCARD std::string* release_extension_id();
+  void set_allocated_extension_id(std::string* extension_id);
+  private:
+  const std::string& _internal_extension_id() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_extension_id(const std::string& value);
+  std::string* _internal_mutable_extension_id();
+  public:
+
+  // .gameoverlay.cef.ExtensionSatelliteKind kind = 2;
+  void clear_kind();
+  ::gameoverlay::cef::ExtensionSatelliteKind kind() const;
+  void set_kind(::gameoverlay::cef::ExtensionSatelliteKind value);
+  private:
+  ::gameoverlay::cef::ExtensionSatelliteKind _internal_kind() const;
+  void _internal_set_kind(::gameoverlay::cef::ExtensionSatelliteKind value);
+  public:
+
+  // @@protoc_insertion_point(class_scope:gameoverlay.cef.OpenExtensionSatellite)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr extension_id_;
+    int kind_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_cef_5fipc_2eproto;
+};
+// -------------------------------------------------------------------
+
+class CloseExtensionSatellite final :
+    public ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase /* @@protoc_insertion_point(class_definition:gameoverlay.cef.CloseExtensionSatellite) */ {
+ public:
+  inline CloseExtensionSatellite() : CloseExtensionSatellite(nullptr) {}
+  explicit PROTOBUF_CONSTEXPR CloseExtensionSatellite(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  CloseExtensionSatellite(const CloseExtensionSatellite& from);
+  CloseExtensionSatellite(CloseExtensionSatellite&& from) noexcept
+    : CloseExtensionSatellite() {
+    *this = ::std::move(from);
+  }
+
+  inline CloseExtensionSatellite& operator=(const CloseExtensionSatellite& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline CloseExtensionSatellite& operator=(CloseExtensionSatellite&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const CloseExtensionSatellite& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const CloseExtensionSatellite* internal_default_instance() {
+    return reinterpret_cast<const CloseExtensionSatellite*>(
+               &_CloseExtensionSatellite_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    17;
+
+  friend void swap(CloseExtensionSatellite& a, CloseExtensionSatellite& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(CloseExtensionSatellite* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(CloseExtensionSatellite* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  CloseExtensionSatellite* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<CloseExtensionSatellite>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyFrom;
+  inline void CopyFrom(const CloseExtensionSatellite& from) {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyImpl(*this, from);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeFrom;
+  void MergeFrom(const CloseExtensionSatellite& from) {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeImpl(*this, from);
+  }
+  public:
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "gameoverlay.cef.CloseExtensionSatellite";
+  }
+  protected:
+  explicit CloseExtensionSatellite(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  // @@protoc_insertion_point(class_scope:gameoverlay.cef.CloseExtensionSatellite)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+  };
+  friend struct ::TableStruct_cef_5fipc_2eproto;
+};
+// -------------------------------------------------------------------
+
 class KeyEvent final :
     public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:gameoverlay.cef.KeyEvent) */ {
  public:
@@ -3406,7 +3766,7 @@ class KeyEvent final :
                &_KeyEvent_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    16;
+    18;
 
   friend void swap(KeyEvent& a, KeyEvent& b) {
     a.Swap(&b);
@@ -3625,7 +3985,7 @@ class MouseEvent final :
                &_MouseEvent_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    17;
+    19;
 
   friend void swap(MouseEvent& a, MouseEvent& b) {
     a.Swap(&b);
@@ -3839,7 +4199,7 @@ class WheelEvent final :
                &_WheelEvent_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    18;
+    20;
 
   friend void swap(WheelEvent& a, WheelEvent& b) {
     a.Swap(&b);
@@ -4042,7 +4402,7 @@ class Ready final :
                &_Ready_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    19;
+    21;
 
   friend void swap(Ready& a, Ready& b) {
     a.Swap(&b);
@@ -4190,7 +4550,7 @@ class Paint final :
                &_Paint_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    20;
+    22;
 
   friend void swap(Paint& a, Paint& b) {
     a.Swap(&b);
@@ -4267,6 +4627,7 @@ class Paint final :
     kHeightFieldNumber = 2,
     kNtHandleFieldNumber = 3,
     kLayoutGenerationFieldNumber = 4,
+    kLayerFieldNumber = 5,
   };
   // uint32 width = 1;
   void clear_width();
@@ -4304,6 +4665,19 @@ class Paint final :
   void _internal_set_layout_generation(uint32_t value);
   public:
 
+  // optional uint32 layer = 5;
+  bool has_layer() const;
+  private:
+  bool _internal_has_layer() const;
+  public:
+  void clear_layer();
+  uint32_t layer() const;
+  void set_layer(uint32_t value);
+  private:
+  uint32_t _internal_layer() const;
+  void _internal_set_layer(uint32_t value);
+  public:
+
   // @@protoc_insertion_point(class_scope:gameoverlay.cef.Paint)
  private:
   class _Internal;
@@ -4312,11 +4686,13 @@ class Paint final :
   typedef void InternalArenaConstructable_;
   typedef void DestructorSkippable_;
   struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::HasBits<1> _has_bits_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
     uint32_t width_;
     uint32_t height_;
     uint64_t nt_handle_;
     uint32_t layout_generation_;
-    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+    uint32_t layer_;
   };
   union { Impl_ _impl_; };
   friend struct ::TableStruct_cef_5fipc_2eproto;
@@ -4371,7 +4747,7 @@ class PaintError final :
                &_PaintError_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    21;
+    23;
 
   friend void swap(PaintError& a, PaintError& b) {
     a.Swap(&b);
@@ -4524,7 +4900,7 @@ class NavState final :
                &_NavState_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    22;
+    24;
 
   friend void swap(NavState& a, NavState& b) {
     a.Swap(&b);
@@ -4726,7 +5102,7 @@ class HostUiAction final :
                &_HostUiAction_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    23;
+    25;
 
   friend void swap(HostUiAction& a, HostUiAction& b) {
     a.Swap(&b);
@@ -4918,7 +5294,7 @@ class BridgeInvoke final :
                &_BridgeInvoke_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    24;
+    26;
 
   friend void swap(BridgeInvoke& a, BridgeInvoke& b) {
     a.Swap(&b);
@@ -5114,7 +5490,7 @@ class BridgeResult final :
                &_BridgeResult_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    25;
+    27;
 
   friend void swap(BridgeResult& a, BridgeResult& b) {
     a.Swap(&b);
@@ -5305,7 +5681,7 @@ class BridgePush final :
                &_BridgePush_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    26;
+    28;
 
   friend void swap(BridgePush& a, BridgePush& b) {
     a.Swap(&b);
@@ -6717,6 +7093,154 @@ inline ::gameoverlay::cef::SetContentRect* Envelope::mutable_set_content_rect() 
   return _msg;
 }
 
+// .gameoverlay.cef.OpenExtensionSatellite open_extension_satellite = 34;
+inline bool Envelope::_internal_has_open_extension_satellite() const {
+  return body_case() == kOpenExtensionSatellite;
+}
+inline bool Envelope::has_open_extension_satellite() const {
+  return _internal_has_open_extension_satellite();
+}
+inline void Envelope::set_has_open_extension_satellite() {
+  _impl_._oneof_case_[0] = kOpenExtensionSatellite;
+}
+inline void Envelope::clear_open_extension_satellite() {
+  if (_internal_has_open_extension_satellite()) {
+    if (GetArenaForAllocation() == nullptr) {
+      delete _impl_.body_.open_extension_satellite_;
+    }
+    clear_has_body();
+  }
+}
+inline ::gameoverlay::cef::OpenExtensionSatellite* Envelope::release_open_extension_satellite() {
+  // @@protoc_insertion_point(field_release:gameoverlay.cef.Envelope.open_extension_satellite)
+  if (_internal_has_open_extension_satellite()) {
+    clear_has_body();
+    ::gameoverlay::cef::OpenExtensionSatellite* temp = _impl_.body_.open_extension_satellite_;
+    if (GetArenaForAllocation() != nullptr) {
+      temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+    }
+    _impl_.body_.open_extension_satellite_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline const ::gameoverlay::cef::OpenExtensionSatellite& Envelope::_internal_open_extension_satellite() const {
+  return _internal_has_open_extension_satellite()
+      ? *_impl_.body_.open_extension_satellite_
+      : reinterpret_cast< ::gameoverlay::cef::OpenExtensionSatellite&>(::gameoverlay::cef::_OpenExtensionSatellite_default_instance_);
+}
+inline const ::gameoverlay::cef::OpenExtensionSatellite& Envelope::open_extension_satellite() const {
+  // @@protoc_insertion_point(field_get:gameoverlay.cef.Envelope.open_extension_satellite)
+  return _internal_open_extension_satellite();
+}
+inline ::gameoverlay::cef::OpenExtensionSatellite* Envelope::unsafe_arena_release_open_extension_satellite() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:gameoverlay.cef.Envelope.open_extension_satellite)
+  if (_internal_has_open_extension_satellite()) {
+    clear_has_body();
+    ::gameoverlay::cef::OpenExtensionSatellite* temp = _impl_.body_.open_extension_satellite_;
+    _impl_.body_.open_extension_satellite_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline void Envelope::unsafe_arena_set_allocated_open_extension_satellite(::gameoverlay::cef::OpenExtensionSatellite* open_extension_satellite) {
+  clear_body();
+  if (open_extension_satellite) {
+    set_has_open_extension_satellite();
+    _impl_.body_.open_extension_satellite_ = open_extension_satellite;
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:gameoverlay.cef.Envelope.open_extension_satellite)
+}
+inline ::gameoverlay::cef::OpenExtensionSatellite* Envelope::_internal_mutable_open_extension_satellite() {
+  if (!_internal_has_open_extension_satellite()) {
+    clear_body();
+    set_has_open_extension_satellite();
+    _impl_.body_.open_extension_satellite_ = CreateMaybeMessage< ::gameoverlay::cef::OpenExtensionSatellite >(GetArenaForAllocation());
+  }
+  return _impl_.body_.open_extension_satellite_;
+}
+inline ::gameoverlay::cef::OpenExtensionSatellite* Envelope::mutable_open_extension_satellite() {
+  ::gameoverlay::cef::OpenExtensionSatellite* _msg = _internal_mutable_open_extension_satellite();
+  // @@protoc_insertion_point(field_mutable:gameoverlay.cef.Envelope.open_extension_satellite)
+  return _msg;
+}
+
+// .gameoverlay.cef.CloseExtensionSatellite close_extension_satellite = 35;
+inline bool Envelope::_internal_has_close_extension_satellite() const {
+  return body_case() == kCloseExtensionSatellite;
+}
+inline bool Envelope::has_close_extension_satellite() const {
+  return _internal_has_close_extension_satellite();
+}
+inline void Envelope::set_has_close_extension_satellite() {
+  _impl_._oneof_case_[0] = kCloseExtensionSatellite;
+}
+inline void Envelope::clear_close_extension_satellite() {
+  if (_internal_has_close_extension_satellite()) {
+    if (GetArenaForAllocation() == nullptr) {
+      delete _impl_.body_.close_extension_satellite_;
+    }
+    clear_has_body();
+  }
+}
+inline ::gameoverlay::cef::CloseExtensionSatellite* Envelope::release_close_extension_satellite() {
+  // @@protoc_insertion_point(field_release:gameoverlay.cef.Envelope.close_extension_satellite)
+  if (_internal_has_close_extension_satellite()) {
+    clear_has_body();
+    ::gameoverlay::cef::CloseExtensionSatellite* temp = _impl_.body_.close_extension_satellite_;
+    if (GetArenaForAllocation() != nullptr) {
+      temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+    }
+    _impl_.body_.close_extension_satellite_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline const ::gameoverlay::cef::CloseExtensionSatellite& Envelope::_internal_close_extension_satellite() const {
+  return _internal_has_close_extension_satellite()
+      ? *_impl_.body_.close_extension_satellite_
+      : reinterpret_cast< ::gameoverlay::cef::CloseExtensionSatellite&>(::gameoverlay::cef::_CloseExtensionSatellite_default_instance_);
+}
+inline const ::gameoverlay::cef::CloseExtensionSatellite& Envelope::close_extension_satellite() const {
+  // @@protoc_insertion_point(field_get:gameoverlay.cef.Envelope.close_extension_satellite)
+  return _internal_close_extension_satellite();
+}
+inline ::gameoverlay::cef::CloseExtensionSatellite* Envelope::unsafe_arena_release_close_extension_satellite() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:gameoverlay.cef.Envelope.close_extension_satellite)
+  if (_internal_has_close_extension_satellite()) {
+    clear_has_body();
+    ::gameoverlay::cef::CloseExtensionSatellite* temp = _impl_.body_.close_extension_satellite_;
+    _impl_.body_.close_extension_satellite_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline void Envelope::unsafe_arena_set_allocated_close_extension_satellite(::gameoverlay::cef::CloseExtensionSatellite* close_extension_satellite) {
+  clear_body();
+  if (close_extension_satellite) {
+    set_has_close_extension_satellite();
+    _impl_.body_.close_extension_satellite_ = close_extension_satellite;
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:gameoverlay.cef.Envelope.close_extension_satellite)
+}
+inline ::gameoverlay::cef::CloseExtensionSatellite* Envelope::_internal_mutable_close_extension_satellite() {
+  if (!_internal_has_close_extension_satellite()) {
+    clear_body();
+    set_has_close_extension_satellite();
+    _impl_.body_.close_extension_satellite_ = CreateMaybeMessage< ::gameoverlay::cef::CloseExtensionSatellite >(GetArenaForAllocation());
+  }
+  return _impl_.body_.close_extension_satellite_;
+}
+inline ::gameoverlay::cef::CloseExtensionSatellite* Envelope::mutable_close_extension_satellite() {
+  ::gameoverlay::cef::CloseExtensionSatellite* _msg = _internal_mutable_close_extension_satellite();
+  // @@protoc_insertion_point(field_mutable:gameoverlay.cef.Envelope.close_extension_satellite)
+  return _msg;
+}
+
 // .gameoverlay.cef.KeyEvent key_event = 40;
 inline bool Envelope::_internal_has_key_event() const {
   return body_case() == kKeyEvent;
@@ -8104,6 +8628,84 @@ inline void SetContentRect::set_height(uint32_t value) {
 
 // -------------------------------------------------------------------
 
+// OpenExtensionSatellite
+
+// string extension_id = 1;
+inline void OpenExtensionSatellite::clear_extension_id() {
+  _impl_.extension_id_.ClearToEmpty();
+}
+inline const std::string& OpenExtensionSatellite::extension_id() const {
+  // @@protoc_insertion_point(field_get:gameoverlay.cef.OpenExtensionSatellite.extension_id)
+  return _internal_extension_id();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void OpenExtensionSatellite::set_extension_id(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.extension_id_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:gameoverlay.cef.OpenExtensionSatellite.extension_id)
+}
+inline std::string* OpenExtensionSatellite::mutable_extension_id() {
+  std::string* _s = _internal_mutable_extension_id();
+  // @@protoc_insertion_point(field_mutable:gameoverlay.cef.OpenExtensionSatellite.extension_id)
+  return _s;
+}
+inline const std::string& OpenExtensionSatellite::_internal_extension_id() const {
+  return _impl_.extension_id_.Get();
+}
+inline void OpenExtensionSatellite::_internal_set_extension_id(const std::string& value) {
+  
+  _impl_.extension_id_.Set(value, GetArenaForAllocation());
+}
+inline std::string* OpenExtensionSatellite::_internal_mutable_extension_id() {
+  
+  return _impl_.extension_id_.Mutable(GetArenaForAllocation());
+}
+inline std::string* OpenExtensionSatellite::release_extension_id() {
+  // @@protoc_insertion_point(field_release:gameoverlay.cef.OpenExtensionSatellite.extension_id)
+  return _impl_.extension_id_.Release();
+}
+inline void OpenExtensionSatellite::set_allocated_extension_id(std::string* extension_id) {
+  if (extension_id != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.extension_id_.SetAllocated(extension_id, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.extension_id_.IsDefault()) {
+    _impl_.extension_id_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:gameoverlay.cef.OpenExtensionSatellite.extension_id)
+}
+
+// .gameoverlay.cef.ExtensionSatelliteKind kind = 2;
+inline void OpenExtensionSatellite::clear_kind() {
+  _impl_.kind_ = 0;
+}
+inline ::gameoverlay::cef::ExtensionSatelliteKind OpenExtensionSatellite::_internal_kind() const {
+  return static_cast< ::gameoverlay::cef::ExtensionSatelliteKind >(_impl_.kind_);
+}
+inline ::gameoverlay::cef::ExtensionSatelliteKind OpenExtensionSatellite::kind() const {
+  // @@protoc_insertion_point(field_get:gameoverlay.cef.OpenExtensionSatellite.kind)
+  return _internal_kind();
+}
+inline void OpenExtensionSatellite::_internal_set_kind(::gameoverlay::cef::ExtensionSatelliteKind value) {
+  
+  _impl_.kind_ = value;
+}
+inline void OpenExtensionSatellite::set_kind(::gameoverlay::cef::ExtensionSatelliteKind value) {
+  _internal_set_kind(value);
+  // @@protoc_insertion_point(field_set:gameoverlay.cef.OpenExtensionSatellite.kind)
+}
+
+// -------------------------------------------------------------------
+
+// CloseExtensionSatellite
+
+// -------------------------------------------------------------------
+
 // KeyEvent
 
 // .gameoverlay.cef.KeyEventType type = 1;
@@ -8650,6 +9252,34 @@ inline void Paint::_internal_set_layout_generation(uint32_t value) {
 inline void Paint::set_layout_generation(uint32_t value) {
   _internal_set_layout_generation(value);
   // @@protoc_insertion_point(field_set:gameoverlay.cef.Paint.layout_generation)
+}
+
+// optional uint32 layer = 5;
+inline bool Paint::_internal_has_layer() const {
+  bool value = (_impl_._has_bits_[0] & 0x00000001u) != 0;
+  return value;
+}
+inline bool Paint::has_layer() const {
+  return _internal_has_layer();
+}
+inline void Paint::clear_layer() {
+  _impl_.layer_ = 0u;
+  _impl_._has_bits_[0] &= ~0x00000001u;
+}
+inline uint32_t Paint::_internal_layer() const {
+  return _impl_.layer_;
+}
+inline uint32_t Paint::layer() const {
+  // @@protoc_insertion_point(field_get:gameoverlay.cef.Paint.layer)
+  return _internal_layer();
+}
+inline void Paint::_internal_set_layer(uint32_t value) {
+  _impl_._has_bits_[0] |= 0x00000001u;
+  _impl_.layer_ = value;
+}
+inline void Paint::set_layer(uint32_t value) {
+  _internal_set_layer(value);
+  // @@protoc_insertion_point(field_set:gameoverlay.cef.Paint.layer)
 }
 
 // -------------------------------------------------------------------
@@ -9401,6 +10031,10 @@ inline void BridgePush::set_allocated_message_json(std::string* message_json) {
 
 // -------------------------------------------------------------------
 
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
 
 // @@protoc_insertion_point(namespace_scope)
 
@@ -9443,6 +10077,11 @@ template <> struct is_proto_enum< ::gameoverlay::cef::HostUiActionKind> : ::std:
 template <>
 inline const EnumDescriptor* GetEnumDescriptor< ::gameoverlay::cef::HostUiActionKind>() {
   return ::gameoverlay::cef::HostUiActionKind_descriptor();
+}
+template <> struct is_proto_enum< ::gameoverlay::cef::ExtensionSatelliteKind> : ::std::true_type {};
+template <>
+inline const EnumDescriptor* GetEnumDescriptor< ::gameoverlay::cef::ExtensionSatelliteKind>() {
+  return ::gameoverlay::cef::ExtensionSatelliteKind_descriptor();
 }
 
 PROTOBUF_NAMESPACE_CLOSE

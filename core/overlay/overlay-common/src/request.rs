@@ -6,7 +6,7 @@ use core::{fmt::Debug, num::NonZeroU32};
 
 use bincode::{Decode, Encode};
 
-use crate::{cursor::Cursor, size::PercentLength};
+use crate::{cursor::Cursor, paint_cmd::PaintCmd, size::PercentLength};
 
 /// Describes a request.
 #[derive(Debug, Encode, Decode, Clone)]
@@ -53,6 +53,13 @@ pub enum WindowRequest {
 
     /// Set hit-test rect for a specific DXGI layer (draw still uses texture size).
     SetLayerInputRect(SetLayerInputRect),
+
+    /// Periodic overlay visibility + configured hotkey (host → injected).
+    HotKeyAndVisibility(HotKeyAndVisibility),
+
+    /// Steam `sub_1800BE1F0` paint cmd (not opcode 17 — that is
+    /// [`UpdateSharedHandle`] / [`UpdateLayerHandle`]).
+    PaintCmd(PaintCmd),
 }
 
 mod __sealed {
@@ -211,3 +218,25 @@ pub struct LayerInputRect {
     /// Height in pixels.
     pub height: u32,
 }
+
+/// Overlay hotkey chord. `vk` is the trigger virtual-key; `modifiers` is a
+/// bit mask (`0x1` = Shift, `0x2` = Ctrl, `0x4` = Alt).
+#[derive(Debug, Default, Encode, Decode, Clone, Copy, PartialEq, Eq)]
+pub struct HotkeyChord {
+    /// Trigger virtual-key (e.g. `VK_TAB` = `0x09`).
+    pub vk: u16,
+    /// Modifier mask (`0x1` Shift, `0x2` Ctrl, `0x4` Alt).
+    pub modifiers: u16,
+}
+
+/// Host → injected visibility heartbeat. Visibility is applied via [`BlockInput`].
+#[derive(Debug, Default, Encode, Decode, Clone, PartialEq, Eq)]
+pub struct HotKeyAndVisibility {
+    /// Whether the overlay is Interactive (input blocked from the game).
+    pub visible: bool,
+    /// Configured overlay toggle chord.
+    pub hotkey: HotkeyChord,
+}
+impl_WindowRequestItem!(HotKeyAndVisibility);
+
+impl_WindowRequestItem!(PaintCmd);

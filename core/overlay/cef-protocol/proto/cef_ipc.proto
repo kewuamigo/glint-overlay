@@ -63,6 +63,9 @@ message Envelope {
     BridgePush bridge_push = 32;
     // Arbitrary content OSR hole inside fullscreen shell chrome (React BrowserPanel).
     SetContentRect set_content_rect = 33;
+    // Chrome-style extension satellite (popup/options) — never touches content_ OSR.
+    OpenExtensionSatellite open_extension_satellite = 34;
+    CloseExtensionSatellite close_extension_satellite = 35;
 
     // Host → CEF (input — hot path)
     KeyEvent key_event = 40;
@@ -209,6 +212,22 @@ message GoForward {}
 
 message Reload {}
 
+// Chrome-style windowed satellite for extension options / action popup.
+// Fail closed in CEF: never clear chrome_/content_ OSR on satellite errors.
+enum ExtensionSatelliteKind {
+  EXTENSION_SATELLITE_KIND_UNSPECIFIED = 0;
+  EXTENSION_SATELLITE_KIND_OPTIONS = 1;
+  EXTENSION_SATELLITE_KIND_POPUP = 2;
+}
+
+message OpenExtensionSatellite {
+  // Folder name under %APPDATA%/Glint/BrowserExtensions (not chrome-extension id).
+  string extension_id = 1;
+  ExtensionSatelliteKind kind = 2;
+}
+
+message CloseExtensionSatellite {}
+
 // ---------------------------------------------------------------------------
 // Input (host → CEF)
 //
@@ -284,6 +303,8 @@ message Paint {
   // Shared texture NT handle (cross-process). Must remain uint64.
   uint64 nt_handle = 3;
   uint32 layout_generation = 4; // echo of last applied SetInnerBounds gen
+  // 0 = chrome, 1 = content. optional so proto3 0 is not "unset" (legacy).
+  optional uint32 layer = 5;
 }
 
 message PaintError {

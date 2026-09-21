@@ -6,7 +6,9 @@ use glint_integration_tests::{
     attach_spinning_cube_overlay, integration_enabled, resize_game_window, skip_unless_integration,
     wait_for_window_added, wait_for_window_resized,
 };
-use glint_overlay_common::request::{ListenInput, SetAnchor, SetMargin, SetPosition, UpdateSharedHandle};
+use glint_overlay_common::request::{
+    ListenInput, SetAnchor, SetMargin, SetPosition, UpdateSharedHandle,
+};
 use glint_overlay_common::size::PercentLength;
 
 #[tokio::test]

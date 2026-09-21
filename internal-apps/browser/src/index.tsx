@@ -10,6 +10,7 @@ import type { PluginAPI, PluginComponent } from '@glint/plugin-sdk';
 type BrowserTab = { id: string; title: string; url: string };
 type Bookmark = { id: string; title: string; url: string };
 type BrowserSession = { tabs: BrowserTab[]; activeId: string };
+type ExtensionEntry = { id: string; enabled: boolean };
 
 const BROWSER_SESSION_KEY = 'glint.browser-session';
 const BOOKMARKS_KEY = 'glint.bookmarks-v2';
@@ -136,7 +137,6 @@ function NewTabPage({ onNavigate }: { onNavigate: (raw: string) => void }) {
 }
 
 function BrowserPanel({ api }: { api: PluginAPI }) {
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const initial = useRef(initialBrowserState());
   const [tabs, setTabs] = useState<BrowserTab[]>(() => initial.current.tabs);
   const [activeId, setActiveId] = useState(initial.current.activeId);
@@ -147,15 +147,17 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => loadBookmarks());
   const [nav, setNav] = useState({ canGoBack: false, canGoForward: false });
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
-  const activeIdRef = useRef(activeId);
-  useEffect(() => {
-    activeIdRef.current = activeId;
-  }, [activeId]);
-
+  const [extensionsOpen, setExtensionsOpen] = useState(false);
+  const [extensions, setExtensions] = useState<ExtensionEntry[]>([]);
+  const [extensionsRestartHint, setExtensionsRestartHint] = useState(false);
+  const [cwsInput, setCwsInput] = useState('');
+  const [cwsBusy, setCwsBusy] = useState(false);
+  const [cwsError, setCwsError] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const tabsRef = useRef(tabs);
-  useEffect(() => {
-    tabsRef.current = tabs;
-  }, [tabs]);
+  tabsRef.current = tabs;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
 
   const updateTabTitle = useCallback((tabId: string, title: string) => {
     setTabs((prev) =>
@@ -223,8 +225,6 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
     const tab = tabs.find((t) => t.id === activeId);
     setUrlInput(tab && isNewTab(tab) ? '' : (tab?.url ?? ''));
     if (tab && isNewTab(tab)) {
-      // Stop the previous page (YouTube audio etc.) — clearing the hole alone
-      // leaves CEF on the old URL.
       void hostInvoke('browser.navigate', ['about:blank']);
       void api.browser.setContentRect(null);
       void api.browser.blur();
@@ -252,9 +252,13 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
             canGoBack?: boolean;
             canGoForward?: boolean;
           }
+        | { type: 'browserSession'; open?: boolean }
         | { type: 'chrome'; overlayOpen?: boolean }
         | undefined;
       if (!data) return;
+      if (data.type === 'browserSession') {
+        return;
+      }
       if (data.type === 'browser.navState') {
         setNav({
           canGoBack: Boolean(data.canGoBack),
@@ -268,14 +272,9 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
       }
       if (data.type === 'chrome') {
         if (!data.overlayOpen) {
-          // Interactive ended (Hidden or HudPinned) — drop the hole so HudPinned
-          // stamps don't leave the page floating over the game.
           void api.browser.setContentRect(null);
           return;
         }
-        // After Hidden/HudPinned→Interactive: restore hole only.
-        // Do not re-navigate — CEF kept the page alive (audio still plays);
-        // LoadURL would reload YouTube/etc.
         const restore = () => {
           const tab = tabsRef.current.find((t) => t.id === activeIdRef.current);
           if (tab && !isNewTab(tab)) {
@@ -293,15 +292,13 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [reportContentRect, updateTabTitle, updateTabUrl]);
+  }, [api, reportContentRect, updateTabTitle, updateTabUrl]);
 
   useEffect(() => {
     reportContentRect();
-    // Size changes only — keep this path; do not drive move sync through RO.
     const ro = new ResizeObserver(() => reportContentRect());
     if (contentRef.current) ro.observe(contentRef.current);
     window.addEventListener('resize', reportContentRect);
-    // Position-only window moves (shell AppWindow) — ResizeObserver does not fire.
     const onWindowMoved = () => reportContentRect();
     window.addEventListener('overlay-window-moved', onWindowMoved);
     return () => {
@@ -323,29 +320,22 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
     setActiveId(tab.id);
   };
 
-  const closeTab = useCallback(
-    (id: string) => {
-      setTabs((prev) => {
-        if (prev.length === 1) {
-          // Last tab: reset to New Tab and tear down the page.
-          const tab = newTab();
-          setActiveId(tab.id);
-          return [tab];
-        }
-        const next = prev.filter((t) => t.id !== id);
-        if (activeIdRef.current === id) {
-          const nextTab = next[0]!;
-          setActiveId(nextTab.id);
-          if (!isNewTab(nextTab)) {
-            void hostInvoke('browser.navigate', [nextTab.url]);
-          }
-          // New Tab → about:blank via the active-tab effect.
-        }
-        return next;
-      });
-    },
-    [],
-  );
+  const closeTab = useCallback((id: string) => {
+    setTabs((prev) => {
+      if (prev.length === 1) {
+        // Last tab: reset to New Tab — activeId effect blanks content.
+        const tab = newTab();
+        setActiveId(tab.id);
+        return [tab];
+      }
+      const next = prev.filter((t) => t.id !== id);
+      if (activeIdRef.current === id) {
+        setActiveId(next[0]!.id);
+        // Content LoadURL / blank via activeId effect.
+      }
+      return next;
+    });
+  }, []);
 
   const activeBookmark = bookmarks.find((b) => b.url === activeTab.url);
 
@@ -374,6 +364,90 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
     requestAnimationFrame(() => {
       void api.browser.focus();
     });
+  };
+
+  const refreshExtensions = useCallback(async () => {
+    const raw = await hostInvoke('browser.extensions.list');
+    if (!Array.isArray(raw)) {
+      setExtensions([]);
+      return;
+    }
+    const next: ExtensionEntry[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as { id?: unknown; enabled?: unknown };
+      if (typeof row.id !== 'string' || !row.id) continue;
+      next.push({ id: row.id, enabled: row.enabled !== false });
+    }
+    setExtensions(next);
+  }, []);
+
+  const toggleExtensionsPanel = () => {
+    setExtensionsOpen((open) => {
+      const next = !open;
+      if (next) {
+        setBookmarksOpen(false);
+        setExtensionsRestartHint(false);
+        void refreshExtensions();
+      }
+      return next;
+    });
+  };
+
+  const setExtensionEnabled = async (id: string, enabled: boolean) => {
+    try {
+      const raw = await hostInvoke('browser.extensions.setEnabled', [
+        id,
+        enabled,
+      ]);
+      const restartRequired =
+        raw &&
+        typeof raw === 'object' &&
+        (raw as { restartRequired?: unknown }).restartRequired === true;
+      if (restartRequired) setExtensionsRestartHint(true);
+      setExtensions((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, enabled } : e)),
+      );
+    } catch {
+      void refreshExtensions();
+    }
+  };
+
+  const openExtensionOptions = (id: string) => {
+    void hostInvoke('browser.extensions.openOptions', [id]);
+  };
+
+  const openExtensionPopup = (id: string) => {
+    void hostInvoke('browser.extensions.openPopup', [id]);
+  };
+
+  const installFromStore = async () => {
+    const raw = cwsInput.trim();
+    if (!raw || cwsBusy) return;
+    setCwsBusy(true);
+    setCwsError(null);
+    try {
+      const result = await hostInvoke('browser.extensions.installFromStore', [
+        raw,
+      ]);
+      const restartRequired =
+        result &&
+        typeof result === 'object' &&
+        (result as { restartRequired?: unknown }).restartRequired === true;
+      if (restartRequired) setExtensionsRestartHint(true);
+      setCwsInput('');
+      void refreshExtensions();
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : 'Install failed';
+      setCwsError(msg);
+    } finally {
+      setCwsBusy(false);
+    }
   };
 
   const showHole = !isNewTab(activeTab);
@@ -427,6 +501,11 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
           <input
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
+            onFocus={() => {
+              // Explicit chrome steal — host blur grants chrome SetFocus
+              // (hit-test alone only flips on cursor move).
+              void api.browser.blur();
+            }}
             placeholder="Search or enter URL"
             spellCheck={false}
           />
@@ -451,9 +530,27 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
                 : 'browser-bookmarks-toggle'
             }
             title="Bookmarks"
-            onClick={() => setBookmarksOpen((open) => !open)}
+            onClick={() => {
+              setBookmarksOpen((open) => {
+                const next = !open;
+                if (next) setExtensionsOpen(false);
+                return next;
+              });
+            }}
           >
             ☰
+          </button>
+          <button
+            type="button"
+            className={
+              extensionsOpen
+                ? 'browser-extensions-toggle active'
+                : 'browser-extensions-toggle'
+            }
+            title="Extension sideload status"
+            onClick={toggleExtensionsPanel}
+          >
+            Ext
           </button>
         </div>
       </div>
@@ -545,6 +642,95 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
         </div>
       )}
 
+      {extensionsOpen && (
+        <div className="browser-extensions-panel" aria-label="Extension status">
+          <div className="browser-extensions-panel-header">
+            Unpacked extensions
+          </div>
+          <p className="browser-extensions-note muted">
+            Paste a Chrome Web Store URL or extension id to download/unpack into
+            %APPDATA%\Glint\BrowserExtensions. In-page Add to Chrome on Alloy OSR
+            is not supported. Enablement needs a CEF helper restart after install.
+            Options/Popup open desktop satellites — not a Chrome toolbar.
+          </p>
+          <form
+            className="browser-extensions-install"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void installFromStore();
+            }}
+          >
+            <input
+              value={cwsInput}
+              onChange={(e) => setCwsInput(e.target.value)}
+              placeholder="CWS URL or extension id"
+              spellCheck={false}
+              disabled={cwsBusy}
+            />
+            <button type="submit" disabled={cwsBusy || !cwsInput.trim()}>
+              {cwsBusy ? 'Installing…' : 'Install'}
+            </button>
+          </form>
+          {cwsError && (
+            <p className="browser-extensions-error" role="alert">
+              {cwsError}
+            </p>
+          )}
+          {extensionsRestartHint && (
+            <p className="browser-extensions-restart" role="status">
+              Restart the overlay browser for changes to take effect.
+            </p>
+          )}
+          {extensions.length === 0 ? (
+            <p className="muted browser-extensions-empty">
+              No unpacked extensions found
+            </p>
+          ) : (
+            <ul className="browser-extensions-list">
+              {extensions.map((ext) => (
+                <li key={ext.id} className="browser-extensions-row">
+                  <span className="browser-extensions-id" title={ext.id}>
+                    {ext.id}
+                  </span>
+                  <div className="browser-extensions-actions">
+                    <button
+                      type="button"
+                      className="browser-extensions-action"
+                      title="Open extension options (desktop satellite)"
+                      disabled={!ext.enabled}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => openExtensionOptions(ext.id)}
+                    >
+                      Options
+                    </button>
+                    <button
+                      type="button"
+                      className="browser-extensions-action"
+                      title="Open extension popup (best-effort satellite)"
+                      disabled={!ext.enabled}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => openExtensionPopup(ext.id)}
+                    >
+                      Popup
+                    </button>
+                    <label className="browser-extensions-enable">
+                      <input
+                        type="checkbox"
+                        checked={ext.enabled}
+                        onChange={(e) => {
+                          void setExtensionEnabled(ext.id, e.target.checked);
+                        }}
+                      />
+                      Enabled
+                    </label>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="browser-content-host">
         {isNewTab(activeTab) && (
           <NewTabPage onNavigate={(raw) => navigate(raw)} />
@@ -556,7 +742,7 @@ function BrowserPanel({ api }: { api: PluginAPI }) {
               ? 'browser-cef-hole browser-cef-hole-active'
               : 'browser-cef-hole browser-cef-hole-hidden'
           }
-          aria-hidden={!showHole}
+          aria-hidden
         />
       </div>
     </section>

@@ -11,6 +11,9 @@ pub const OVERLAY_DLL_ARM64: &str = "glint_overlay-aarch64.dll";
 /// Built metrics-native DLL filename (under `target/{profile}/`).
 pub const METRICS_DLL_NAME: &str = "glint_metrics_native.dll";
 
+/// Built achievements-native DLL filename (under `target/{profile}/`).
+pub const ACHIEVEMENTS_DLL_NAME: &str = "glint_achievements_native.dll";
+
 /// Owned paths to the overlay DLL set under `dir`.
 #[derive(Debug, Clone)]
 pub struct OverlayDllPaths {

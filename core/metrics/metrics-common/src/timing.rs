@@ -2,7 +2,8 @@
 
 pub const EMA_ALPHA: f64 = 0.18;
 pub const MAX_DELTA_MS: f64 = 500.0;
-pub const FPS_WINDOW_MS: u64 = 500;
+/// Steam `sub_1800C1620`: 1_000_000 µs.
+pub const FPS_WINDOW_MS: u64 = 1_000;
 
 /// Exponential moving average step.
 #[inline]
@@ -118,5 +119,15 @@ mod tests {
     #[test]
     fn fps_from_window_computes() {
         assert!((fps_from_window(60, 1000) - 60.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn fps_window_is_one_second_like_sub_1800c1620() {
+        assert_eq!(FPS_WINDOW_MS, 1_000);
+        let mut w = FpsWindow::new();
+        assert!(!w.on_frame(999).window_reset);
+        let tick = w.on_frame(1_000);
+        assert!(tick.window_reset);
+        assert!((tick.fps - 2.0).abs() < f64::EPSILON);
     }
 }

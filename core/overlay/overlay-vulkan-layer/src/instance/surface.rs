@@ -2,7 +2,7 @@ use ash::vk::{self, Handle};
 use once_cell::sync::Lazy;
 use tracing::{debug, trace};
 
-use crate::{instance::DISPATCH_TABLE};
+use crate::instance::DISPATCH_TABLE;
 use glint_overlay_core::IntDashMap;
 
 /// vkSurfaceKHR to HWND mapping table

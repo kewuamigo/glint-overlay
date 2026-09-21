@@ -152,6 +152,15 @@ void DispatchEnvelope(BrowserApp& app, const gameoverlay::cef::Envelope& env) {
       app.Reload();
       return;
     }
+    case Envelope::kOpenExtensionSatellite: {
+      const auto& m = env.open_extension_satellite();
+      app.OpenExtensionSatellite(m.extension_id(), m.kind());
+      return;
+    }
+    case Envelope::kCloseExtensionSatellite: {
+      app.CloseExtensionSatellite();
+      return;
+    }
     case Envelope::kKeyEvent: {
       const auto& m = env.key_event();
       const char* type = KeyTypeFromProto(m.type());

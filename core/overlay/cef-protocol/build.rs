@@ -5,8 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("PROTOC", protoc);
     }
 
-    prost_build::Config::new()
-        .compile_protos(&["proto/cef_ipc.proto"], &["proto/"])?;
+    prost_build::Config::new().compile_protos(&["proto/cef_ipc.proto"], &["proto/"])?;
 
     println!("cargo:rerun-if-changed=proto/cef_ipc.proto");
     Ok(())

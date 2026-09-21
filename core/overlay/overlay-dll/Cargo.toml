@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 glint-overlay-core = { workspace = true }
+glint-overlay-client = { workspace = true }
 glint-overlay-common = { workspace = true }
 glint-overlay-event = { workspace = true, features = ["bincode"] }
 glint-overlay-vulkan-layer = { workspace = true }
@@ -28,7 +29,11 @@ tracing-subscriber = "0.3"
 
 [dependencies.windows]
 workspace = true
-features = ["Win32_Security", "Win32_System_Diagnostics_Debug"]
+features = [
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+]
 
 [dependencies.tracing]
 version = "0.1"

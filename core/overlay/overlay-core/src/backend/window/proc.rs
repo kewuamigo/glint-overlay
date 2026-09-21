@@ -5,17 +5,18 @@ use crate::{
         window::{CursorState, ImeState, WindowProcData, cursor::load_cursor, input_event},
     },
     event_sink::OverlayEventSink,
+    hook::with_cursor_passthrough,
     util::get_client_size,
 };
+use core::{alloc::Layout, mem, slice};
 use glint_overlay_common::cursor::Cursor;
 use glint_overlay_event::{
     OverlayEvent, WindowEvent,
     input::{
-        ConversionMode, CursorAction, CursorEvent, CursorInputState, Ime,
-        ImeCandidateList, InputPosition, KeyboardInput, ScrollAxis,
+        ConversionMode, CursorAction, CursorEvent, CursorInputState, Ime, ImeCandidateList,
+        InputPosition, KeyboardInput, ScrollAxis,
     },
 };
-use core::{alloc::Layout, mem, slice};
 use parking_lot::MutexGuard;
 use scopeguard::defer;
 use std::alloc;
@@ -94,7 +95,7 @@ fn process_wnd_proc(
                     .blocking_cursor
                     .and_then(load_cursor)
                     .or_else(|| load_cursor(Cursor::Default));
-                unsafe { SetCursor(cursor) };
+                unsafe { with_cursor_passthrough(|| SetCursor(cursor)) };
                 return Some(LRESULT(1));
             }
         }
@@ -595,10 +596,14 @@ fn cursor_event<const BLOCK_RESULT: isize>(
         drop(proc);
         match state {
             CursorInputState::Pressed { .. } => unsafe {
-                SetCapture(HWND(hwnd as _));
+                with_cursor_passthrough(|| {
+                    SetCapture(HWND(hwnd as _));
+                });
             },
             CursorInputState::Released => unsafe {
-                _ = ReleaseCapture();
+                with_cursor_passthrough(|| {
+                    _ = ReleaseCapture();
+                });
             },
         }
 

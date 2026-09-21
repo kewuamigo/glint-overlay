@@ -124,3 +124,10 @@ pub enum Cursor {
     /// Panning cursors with a arrow to left.
     PanWest,
 }
+
+impl Cursor {
+    /// `num_traits::FromPrimitive` helper without requiring the trait in scope.
+    pub fn from_u32(v: u32) -> Option<Self> {
+        <Self as num_traits::FromPrimitive>::from_u32(v)
+    }
+}

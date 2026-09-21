@@ -14,17 +14,15 @@
 
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use glint_overlay_event::{
-    input::{
-        CursorAction, CursorEvent, CursorInputState, InputPosition, Key, KeyInputState,
-        KeyboardInput, ScrollAxis,
-    },
+use glint_overlay_event::input::{
+    CursorAction, CursorEvent, CursorInputState, InputPosition, Key, KeyInputState, KeyboardInput,
+    ScrollAxis,
 };
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     System::Threading::GetCurrentProcessId,
     UI::WindowsAndMessaging::{
-        CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, HHOOK, HC_ACTION,
+        CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, HC_ACTION, HHOOK,
         KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx,
         WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
         WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
@@ -32,10 +30,7 @@ use windows::Win32::{
     },
 };
 
-use crate::{
-    backend::window::input_event,
-    event_sink::OverlayEventSink,
-};
+use crate::{backend::window::input_event, event_sink::OverlayEventSink};
 
 windows::core::link!("user32.dll" "system" fn ScreenToClient(hwnd: HWND, lpPoint: *mut POINT) -> windows::core::BOOL);
 
@@ -175,19 +170,11 @@ fn screen_to_window(hwnd: u32, screen_x: i32, screen_y: i32) -> InputPosition {
             y: screen_y,
         };
         let _ = ScreenToClient(HWND(hwnd as _), &mut pt);
-        InputPosition {
-            x: pt.x,
-            y: pt.y,
-        }
+        InputPosition { x: pt.x, y: pt.y }
     }
 }
 
-fn emit_cursor(
-    id: u32,
-    position: (i32, i32),
-    window: InputPosition,
-    event: CursorEvent,
-) {
+fn emit_cursor(id: u32, position: (i32, i32), window: InputPosition, event: CursorEvent) {
     OverlayEventSink::emit(input_event::cursor_overlay_event(
         id, position, window, event,
     ));
@@ -236,7 +223,9 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                         window,
                         CursorEvent::Action {
                             action: CursorAction::Left,
-                            state: CursorInputState::Pressed { double_click: false },
+                            state: CursorInputState::Pressed {
+                                double_click: false,
+                            },
                         },
                     );
                 }
@@ -258,7 +247,9 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                         window,
                         CursorEvent::Action {
                             action: CursorAction::Right,
-                            state: CursorInputState::Pressed { double_click: false },
+                            state: CursorInputState::Pressed {
+                                double_click: false,
+                            },
                         },
                     );
                 }
@@ -280,7 +271,9 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                         window,
                         CursorEvent::Action {
                             action: CursorAction::Middle,
-                            state: CursorInputState::Pressed { double_click: false },
+                            state: CursorInputState::Pressed {
+                                double_click: false,
+                            },
                         },
                     );
                 }
@@ -347,10 +340,8 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                 ) {
                     // Stamp for diagnostics / future pump coordination. Pump
                     // always emits Keys while blocking; browser-host dedupes.
-                    LAST_KEYBOARD_EMIT.store(
-                        KEYBOARD_EMIT_SEEN | info.time as u64,
-                        Ordering::Release,
-                    );
+                    LAST_KEYBOARD_EMIT
+                        .store(KEYBOARD_EMIT_SEEN | info.time as u64, Ordering::Release);
                     OverlayEventSink::emit(input_event::keyboard_overlay_event(
                         id,
                         KeyboardInput::Key {

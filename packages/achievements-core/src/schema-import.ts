@@ -41,6 +41,13 @@ function collectJsonFiles(dir: string): string[] {
       if (fs.existsSync(p)) out.push(p);
     }
   }
+  const steamSettings = path.join(dir, 'steam_settings');
+  if (fs.existsSync(steamSettings)) {
+    for (const name of names) {
+      const p = path.join(steamSettings, name);
+      if (fs.existsSync(p)) out.push(p);
+    }
+  }
   const epicOut = path.join(dir, 'epic_output', 'achievements_db.json');
   if (fs.existsSync(epicOut)) out.push(epicOut);
   return out;

@@ -122,7 +122,12 @@ impl OverlayEventSink {
             return;
         }
 
-        let sinks: Vec<_> = CURRENT.lock().sinks.iter().map(|(_, s)| s.clone()).collect();
+        let sinks: Vec<_> = CURRENT
+            .lock()
+            .sinks
+            .iter()
+            .map(|(_, s)| s.clone())
+            .collect();
         for sink in sinks {
             sink(event.clone());
         }
@@ -186,10 +191,8 @@ impl OverlayEventSink {
                 if let KeyboardInput::Key { key, state } = key {
                     let vk = key.code.get();
                     if vk == 0x10 {
-                        SHIFT_DOWN.store(
-                            matches!(state, KeyInputState::Pressed),
-                            Ordering::Relaxed,
-                        );
+                        SHIFT_DOWN
+                            .store(matches!(state, KeyInputState::Pressed), Ordering::Relaxed);
                     } else if vk == 0x09
                         && matches!(state, KeyInputState::Pressed)
                         && SHIFT_DOWN.load(Ordering::Relaxed)
@@ -201,18 +204,21 @@ impl OverlayEventSink {
                     Self::owner_of_layer(0).or_else(|| Self::owner_of_layer(1))
                 } else {
                     let inner = CURRENT.lock();
-                    let layer = inner.focus_layer.get(hwnd).copied().or_else(|| {
-                        // No cursor focus yet — topmost layer with an owner.
-                        inner.rects.get(hwnd)?.iter().rev().find_map(|(layer, ..)| {
-                            inner.layers.contains_key(layer).then_some(*layer)
+                    let layer = inner
+                        .focus_layer
+                        .get(hwnd)
+                        .copied()
+                        .or_else(|| {
+                            // No cursor focus yet — topmost layer with an owner.
+                            inner.rects.get(hwnd)?.iter().rev().find_map(|(layer, ..)| {
+                                inner.layers.contains_key(layer).then_some(*layer)
+                            })
                         })
-                    }).or_else(|| {
-                        // Parked CEF: layer may be bound via ListenInput before any
-                        // paint rect exists — still deliver keyboard (hotkey Shift).
-                        [1u32, 0]
-                            .into_iter()
-                            .find(|l| inner.layers.contains_key(l))
-                    });
+                        .or_else(|| {
+                            // Parked CEF: layer may be bound via ListenInput before any
+                            // paint rect exists — still deliver keyboard (hotkey Shift).
+                            [1u32, 0].into_iter().find(|l| inner.layers.contains_key(l))
+                        });
                     layer.and_then(|l| inner.layers.get(&l).copied())
                 }
             }

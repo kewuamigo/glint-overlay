@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::timing::{FpsWindow as FpsWindowState, FrametimeEma, FPS_WINDOW_MS};
+use crate::timing::{FPS_WINDOW_MS, FpsWindow as FpsWindowState, FrametimeEma};
 
 pub static NATIVE_FRAME_COUNT: AtomicU64 = AtomicU64::new(0);
 

@@ -117,9 +117,9 @@ impl VulkanRenderer {
             texture.GetDesc(&mut desc);
             let handle = texture
                 .cast::<IDXGIResource>()
-                .unwrap()
+                .context("overlay texture IDXGIResource QI failed")?
                 .GetSharedHandle()
-                .unwrap();
+                .context("GetSharedHandle failed")?;
             let format = map_dxgi_format_to_vk(desc.Format)
                 .context("unsupported DXGI format for overlay texture")?;
 

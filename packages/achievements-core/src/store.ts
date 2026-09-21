@@ -251,3 +251,69 @@ export function listAchievementsForGame(gameId: string): AchievementRow[] {
     )
     .all(gameId) as AchievementRow[];
 }
+
+export type PrepareStatus = 'pending' | 'ready' | 'failed' | 'skipped';
+
+export type PrepareState = {
+  status: PrepareStatus;
+  error?: string;
+  steamAppId?: string;
+  updatedAt: number;
+};
+
+function setSyncState(key: string, value: string): void {
+  getAchievementsDb()
+    .prepare(
+      `INSERT INTO sync_state (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(key, value);
+}
+
+function getSyncState(key: string): string | null {
+  const row = getAchievementsDb()
+    .prepare(`SELECT value FROM sync_state WHERE key = ?`)
+    .get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setPrepareStatus(
+  libraryGameId: string,
+  status: PrepareStatus,
+  extra?: { error?: string; steamAppId?: string },
+): void {
+  const state: PrepareState = { status, updatedAt: Date.now() };
+  if (extra?.error) state.error = extra.error;
+  if (extra?.steamAppId) state.steamAppId = extra.steamAppId;
+  setSyncState(`prepare:${libraryGameId}`, JSON.stringify(state));
+  if (extra?.steamAppId) {
+    setLibraryIdForAppId(extra.steamAppId, libraryGameId);
+  }
+}
+
+export function getPrepareStatus(libraryGameId: string): PrepareState | null {
+  const raw = getSyncState(`prepare:${libraryGameId}`);
+  return raw ? (JSON.parse(raw) as PrepareState) : null;
+}
+
+export function listPrepareStatuses(): Record<string, PrepareState> {
+  const rows = getAchievementsDb()
+    .prepare(`SELECT key, value FROM sync_state WHERE key LIKE 'prepare:%'`)
+    .all() as { key: string; value: string }[];
+  const out: Record<string, PrepareState> = {};
+  for (const row of rows) {
+    out[row.key.slice('prepare:'.length)] = JSON.parse(row.value) as PrepareState;
+  }
+  return out;
+}
+
+export function setLibraryIdForAppId(
+  appId: string,
+  libraryGameId: string,
+): void {
+  setSyncState(`library_by_appid:${appId}`, libraryGameId);
+}
+
+export function getLibraryIdForAppId(appId: string): string | null {
+  return getSyncState(`library_by_appid:${appId}`);
+}

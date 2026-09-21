@@ -13,8 +13,8 @@ use windows::{
             Direct3D11::*,
             Dxgi::{
                 Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
-                DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE,
-                IDXGIKeyedMutex, IDXGIResource1,
+                DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE, IDXGIKeyedMutex,
+                IDXGIResource1,
             },
         },
     },
@@ -22,7 +22,7 @@ use windows::{
 };
 
 pub use present::{
-    resolve_dxgi_present_address, resolve_dxgi_present_addresses, DxgiPresent1Fn, DxgiPresentFn,
+    DxgiPresent1Fn, DxgiPresentFn, resolve_dxgi_present_address, resolve_dxgi_present_addresses,
 };
 pub use shared::{find_dxgi_adapter, open_shared_texture2d, texture_dimensions};
 
@@ -200,20 +200,12 @@ fn create_shared_buffer(
 }
 
 pub fn read_u32_le(bytes: &[u8]) -> anyhow::Result<u32> {
-    let array: [u8; 4] = bytes
-        .get(..4)
-        .context("missing u32")?
-        .try_into()
-        .unwrap();
+    let array: [u8; 4] = bytes.get(..4).context("missing u32")?.try_into().unwrap();
     Ok(u32::from_le_bytes(array))
 }
 
 pub fn read_i32_le(bytes: &[u8]) -> anyhow::Result<i32> {
-    let array: [u8; 4] = bytes
-        .get(..4)
-        .context("missing i32")?
-        .try_into()
-        .unwrap();
+    let array: [u8; 4] = bytes.get(..4).context("missing i32")?.try_into().unwrap();
     Ok(i32::from_le_bytes(array))
 }
 

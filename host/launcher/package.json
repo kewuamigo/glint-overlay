@@ -10,7 +10,9 @@
     "start": "electron ./dist/main.js",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "test:sync-decision": "tsc && node --test dist/cloud-sync-decision.test.js",
-    "test:appdata-migrate": "tsc && node --test dist/appdata-migrate.test.js"
+    "test:appdata-migrate": "tsc && node --test dist/appdata-migrate.test.js",
+    "test:session-snapshot": "tsc && node --test dist/session-snapshot.test.js",
+    "test:ota": "tsc && node --test dist/ota.test.js"
   },
   "dependencies": {
     "@glint/achievements-core": "workspace:*",

@@ -1,20 +1,32 @@
 import { motion } from 'framer-motion';
-import type { GameArt, ScannedGame } from '../launcher-bridge';
+import {
+  prepareBlocksLaunch,
+  type GameArt,
+  type PrepareState,
+  type ScannedGame,
+} from '../launcher-bridge';
 import { gameAccent, formatPlaytime } from '../lib/gameVisual';
 import { useCloudSyncPlayState } from '../hooks/useCloudSyncPlayState';
 import { AddGameForm } from './FriendList';
 import { CloudSyncGameActions } from './CloudSyncGameActions';
+import { PrepareFailedBanner, PrepareProgress } from './PrepareFailedBanner';
+import { ArtMedia } from './ArtMedia';
+import { ArtGearButton } from './ArtPickerModal';
 
 type Props = {
   games: ScannedGame[];
   featured: ScannedGame | null;
   launching: string | null;
+  prepareStatuses: Record<string, PrepareState>;
   covers: Record<string, GameArt>;
   onAttach: (game: ScannedGame) => void;
   onPlay: (game: ScannedGame) => void;
+  onRetryPrepare: (game: ScannedGame, steamAppId?: string, forceGse?: boolean) => void;
   onSelectGame: (game: ScannedGame) => void;
   onAddGame: (name: string, exe: string) => void;
   onReset: () => void;
+  onCustomizeArt?: (game: ScannedGame) => void;
+  forcingGse?: boolean;
 };
 
 const grid = {
@@ -31,20 +43,34 @@ export function LibraryView({
   games,
   featured,
   launching,
+  prepareStatuses,
   covers,
   onAttach,
   onPlay,
+  onRetryPrepare,
   onSelectGame,
   onAddGame,
   onReset,
+  onCustomizeArt,
+  forcingGse,
 }: Props) {
   const others = games.filter((g) => g.id !== featured?.id);
   const feat = featured ? gameAccent(featured.name) : null;
   const featuredHero = featured ? covers[featured.id]?.hero : undefined;
+  const featuredHeroMime = featured ? covers[featured.id]?.heroMime : undefined;
   const featuredPlay = featured ? formatPlaytime(featured.playtime_hours) : null;
   const { syncing } = useCloudSyncPlayState(featured?.id);
+  const featuredPrepare = featured
+    ? prepareStatuses[featured.id]
+    : undefined;
+  const featuredCreating =
+    featured != null &&
+    (!featuredPrepare || featuredPrepare.status === 'pending');
+  const featuredFailed = featuredPrepare?.status === 'failed';
   const playBusy = featured
-    ? launching === featured.id || syncing
+    ? launching === featured.id ||
+      syncing ||
+      prepareBlocksLaunch(featuredPrepare)
     : false;
   const playLabel = syncing
     ? 'Syncing…'
@@ -80,7 +106,18 @@ export function LibraryView({
           }}
         >
           {featuredHero && (
-            <img className="featured-cover" src={featuredHero} alt="" />
+            <ArtMedia
+              className="featured-cover"
+              src={featuredHero}
+              mime={featuredHeroMime}
+              alt=""
+            />
+          )}
+          {onCustomizeArt && (
+            <ArtGearButton
+              className="featured-art-gear"
+              onClick={() => onCustomizeArt(featured)}
+            />
           )}
           <div className="featured-body">
             <div className="featured-top">
@@ -94,33 +131,54 @@ export function LibraryView({
               {featured.running && featured.pid ? ` · PID ${featured.pid}` : ''}
               {featuredPlay ? ` · ${featuredPlay} played` : ''}
             </p>
-            {featured.running && featured.pid ? (
-              <motion.button
+            <div className="featured-actions">
+              {featured.running && featured.pid ? (
+                <motion.button
+                  type="button"
+                  className="btn-primary"
+                  disabled={
+                    launching === String(featured.pid) || launching === featured.id
+                  }
+                  onClick={() => onAttach(featured)}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.96 }}
+                >
+                  {launching === String(featured.pid)
+                    ? 'Attaching overlay…'
+                    : 'Attach overlay'}
+                </motion.button>
+              ) : (
+                <motion.button
+                  type="button"
+                  className={`btn-primary${syncing ? ' btn-primary--syncing' : ''}`}
+                  disabled={playBusy}
+                  onClick={() => onPlay(featured)}
+                  whileHover={playBusy ? undefined : { scale: 1.02 }}
+                  whileTap={playBusy ? undefined : { scale: 0.96 }}
+                  aria-busy={syncing || undefined}
+                >
+                  <span className="btn-play-label">{playLabel}</span>
+                </motion.button>
+              )}
+              <button
                 type="button"
-                className="btn-primary"
-                disabled={
-                  launching === String(featured.pid) || launching === featured.id
-                }
-                onClick={() => onAttach(featured)}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.96 }}
+                className="btn-secondary"
+                disabled={featured.running || featuredCreating}
+                onClick={() => onRetryPrepare(featured, undefined, true)}
               >
-                {launching === String(featured.pid)
-                  ? 'Attaching overlay…'
-                  : 'Attach overlay'}
-              </motion.button>
-            ) : (
-              <motion.button
-                type="button"
-                className={`btn-primary${syncing ? ' btn-primary--syncing' : ''}`}
-                disabled={playBusy}
-                onClick={() => onPlay(featured)}
-                whileHover={playBusy ? undefined : { scale: 1.02 }}
-                whileTap={playBusy ? undefined : { scale: 0.96 }}
-                aria-busy={syncing || undefined}
-              >
-                <span className="btn-play-label">{playLabel}</span>
-              </motion.button>
+                {featuredCreating ? 'Installing…' : 'Install GSE'}
+              </button>
+            </div>
+            {featuredCreating && !featured.running && (
+              <PrepareProgress forceGse={forcingGse} />
+            )}
+            {featuredFailed && !featured.running && (
+              <PrepareFailedBanner
+                prepare={featuredPrepare}
+                game={featured}
+                errorClassName="cloud-sync-status-line"
+                onRetry={onRetryPrepare}
+              />
             )}
             <CloudSyncGameActions game={featured} />
           </div>
@@ -143,7 +201,8 @@ export function LibraryView({
         >
           {others.map((game) => {
             const { hue, initials } = gameAccent(game.name);
-            const gridArt = covers[game.id]?.grid;
+            const art = covers[game.id];
+            const gridArt = art?.grid;
             const play = formatPlaytime(game.playtime_hours);
             return (
               <motion.button
@@ -165,9 +224,20 @@ export function LibraryView({
                 }}
               >
                 {gridArt ? (
-                  <img className="game-tile-cover" src={gridArt} alt="" />
+                  <ArtMedia
+                    className="game-tile-cover"
+                    src={gridArt}
+                    mime={art?.gridMime}
+                    alt=""
+                  />
                 ) : (
                   <span className="game-tile-art">{initials}</span>
+                )}
+                {onCustomizeArt && (
+                  <ArtGearButton
+                    className="game-tile-art-gear"
+                    onClick={() => onCustomizeArt(game)}
+                  />
                 )}
                 {game.running && <span className="game-tile-badge">Live</span>}
                 <div className="game-tile-label">

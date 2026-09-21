@@ -5,8 +5,11 @@
 
 mod apps;
 mod bridge;
+mod browser_extensions;
 mod cef_child;
 mod etw_reader;
+mod hw_monitor;
+mod metrics_prefs;
 mod plugin_achievements;
 mod plugin_db;
 mod plugin_fs;
@@ -18,21 +21,22 @@ mod session_mode;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use cef_child::{
-    CefEvent, CefFocusTarget, CefSession, CefShare, resolve_session_document,
-};
+use cef_child::{CefEvent, CefFocusTarget, CefSession, CefShare, resolve_session_document};
 use glint_cef_protocol::{
     KeyEvent, KeyEventType, MouseButton, MouseEvent, MouseEventType, WheelEvent,
 };
 use glint_gpu_texture::{GpuLuid as DxgiLuid, find_dxgi_adapter};
 use glint_overlay_client::{
-    IpcClientConn, connect_pipe, surface::OverlaySurface,
+    IpcClientConn, connect_pipe,
+    surface::OverlaySurface,
+    ty::{CopyRect, Rect},
 };
 use glint_overlay_common::{
     cursor::Cursor,
+    paint_cmd::PaintCmd,
     request::{
-        BlockInput, LayerInputRect, ListenInput, SetBlockingCursor, SetLayerInputRect,
-        SetLayerPosition, UpdateLayerHandle,
+        BlockInput, HotKeyAndVisibility, HotkeyChord, LayerInputRect, ListenInput,
+        SetBlockingCursor, SetLayerInputRect, SetLayerPosition, UpdateLayerHandle,
     },
     size::PercentLength,
 };
@@ -43,7 +47,6 @@ use glint_overlay_event::{
         ScrollAxis,
     },
 };
-use num::FromPrimitive;
 use serde_json::Value;
 use session_mode::SessionMode;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -62,10 +65,19 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 const TITLEBAR_H: i32 = 34;
 const TITLEBAR_WIN_BTNS_W: i32 = 96;
 const RESIZE_EDGE_PX: i32 = 10;
-/// Coalesce SetInnerBounds during resize/move drag.
+/// Coalesce SetInnerBounds during resize. Dest-only move never set_bounds.
 const BOUNDS_THROTTLE: Duration = Duration::from_millis(16);
 /// Ignore repeated Shift+Tab within this window (auto-repeat / duplicate source).
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(400);
+/// Visibility + hotkey heartbeat: every 2 s, or immediately on change.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+/// Shift bit on [`HotkeyChord::modifiers`].
+const HOTKEY_MOD_SHIFT: u16 = 0x0001;
+/// Configured overlay toggle (Shift+Tab). No pad chord — XInput has none.
+const OVERLAY_HOTKEY: HotkeyChord = HotkeyChord {
+    vk: 0x09,
+    modifiers: HOTKEY_MOD_SHIFT,
+};
 /// Metrics bridge push while Interactive / HudPinned (FR-004, ≤1 Hz).
 const METRICS_PUSH_INTERVAL: Duration = Duration::from_secs(1);
 /// Electron `flashToastHud` default for achievement unlocks (~Xbox toast length).
@@ -74,6 +86,41 @@ const TOAST_HUD_FLASH: Duration = Duration::from_secs(12);
 /// Electron `toastActive()` — hold HudPinned while the flash window is open.
 fn toast_active(toast_until: Option<Instant>) -> bool {
     toast_until.is_some_and(|u| Instant::now() < u)
+}
+
+/// Publish when visibility/hotkey changed, or at least [`HEARTBEAT_INTERVAL`] passed.
+fn heartbeat_should_publish(
+    last: Option<(Instant, bool, HotkeyChord)>,
+    now: Instant,
+    visible: bool,
+    hotkey: HotkeyChord,
+) -> bool {
+    match last {
+        None => true,
+        Some((t, last_vis, last_hk)) => {
+            last_vis != visible || last_hk != hotkey || now.duration_since(t) >= HEARTBEAT_INTERVAL
+        }
+    }
+}
+
+async fn publish_visibility_heartbeat(
+    conn: &mut IpcClientConn,
+    win_id: u32,
+    visible: bool,
+    last: &mut Option<(Instant, bool, HotkeyChord)>,
+) {
+    let now = Instant::now();
+    if !heartbeat_should_publish(*last, now, visible, OVERLAY_HOTKEY) {
+        return;
+    }
+    let _ = conn
+        .window(win_id)
+        .request(HotKeyAndVisibility {
+            visible,
+            hotkey: OVERLAY_HOTKEY,
+        })
+        .await;
+    *last = Some((now, visible, OVERLAY_HOTKEY));
 }
 
 /// CEF `EVENTFLAG_*` bits (`cef_types.h`). The IPC contract requires the full
@@ -103,6 +150,7 @@ enum HostCtrl {
 #[derive(Default)]
 struct Hotkey {
     shift_down: bool,
+    tab_down: bool,
     last_toggle: Option<Instant>,
 }
 
@@ -113,14 +161,25 @@ impl Hotkey {
             return false;
         };
         let down = matches!(state, KeyInputState::Pressed);
-        if key.code.get() == 0x10 && !key.extended {
+        // VK_SHIFT, VK_LSHIFT, VK_RSHIFT — extended VK_SHIFT is still 0x10.
+        if matches!(key.code.get(), 0x10 | 0xA0 | 0xA1) {
             self.shift_down = down;
             return false;
         }
-        if key.code.get() != 0x09 || !down || !self.shift_down {
+        if key.code.get() != 0x09 {
             return false;
         }
-        // Auto-repeat (~30ms) and LL+pump duplicates would each flip the mode.
+        if !down {
+            self.tab_down = false;
+            return false;
+        }
+        // WM_KEYDOWN repeats and LL+pump duplicates are extra Pressed events
+        // without a Release. A second toggle would close Interactive immediately
+        // (FPS pin → HudPinned): cursor flash, overlay blink, HUD remains.
+        if self.tab_down || !self.shift_down {
+            return false;
+        }
+        self.tab_down = true;
         // Same window as the Electron host's SHIFT_TAB_DEBOUNCE_MS.
         let now = Instant::now();
         if self
@@ -203,6 +262,18 @@ async fn main() -> anyhow::Result<()> {
         // Electron overlay-session: EtwReader.start(pid) + metrics pump.
         etw_reader::start(pid);
     }
+    // Launcher sidecar (`%APPDATA%/Glint/session.json`), read at startup and
+    // retried on the metrics pump until a pid match lands: feeds the optional
+    // gameName/playtimeSeconds on connection pushes. Missing/stale → None.
+    let attach_epoch_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as i64);
+    let mut session_info = load_session_snapshot(game_pid);
+    if let Some((name, seconds)) = &session_info {
+        info!(name, playtime_seconds = seconds, "session snapshot matched");
+    }
+    hw_monitor::start();
     info!(%pipe, "connecting CEF-only overlay pipe");
 
     let (mut conn, mut events) = connect_pipe(&pipe, Some(Duration::from_secs(10)))
@@ -217,17 +288,19 @@ async fn main() -> anyhow::Result<()> {
         let ev = events.recv().await.context("event stream closed")?;
         if let OverlayEvent::Window {
             id,
-            event: WindowEvent::Added {
-                width,
-                height,
-                gpu_id,
-            },
+            event:
+                WindowEvent::Added {
+                    width,
+                    height,
+                    gpu_id,
+                },
         } = ev
         {
             break (id, width, height, gpu_id);
         }
     };
     info!(win_id, win_w, win_h, ?gpu_id, "window added");
+    hw_monitor::set_adapter_luid(gpu_id.low, gpu_id.high);
 
     let document = resolve_session_document(
         std::env::var("GLINT_UI_URL")
@@ -236,11 +309,14 @@ async fn main() -> anyhow::Result<()> {
     )?;
     // Shell document — this helper owns the session (no Electron overlay host).
     let owns_session = true;
+    // Must match glint-cef topology flags. Product default = dual OSR
+    // (shell + content). Shell-only iframe via GLINT_CEF_SHELL_ONLY=1.
+    let osr_topology = osr_topology_from_env();
     let overlay_layer: u32 = std::env::var("GLINT_LAYER")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
-    info!(overlay_layer, owns_session, "overlay layer");
+    info!(overlay_layer, owns_session, ?osr_topology, "overlay layer");
     if owns_session {
         // Keyboard stays armed in every mode so Shift+Tab still reaches us
         // while the overlay is hidden.
@@ -265,6 +341,8 @@ async fn main() -> anyhow::Result<()> {
         high: gpu_id.high,
     })?;
     let mut surface: OverlaySurface = OverlaySurface::new(adapter.as_ref())?;
+    let mut content_surface: OverlaySurface = OverlaySurface::new(adapter.as_ref())?;
+    let mut promo_surface: OverlaySurface = OverlaySurface::new(adapter.as_ref())?;
 
     // The shell owns the whole game client; the browser document keeps the
     // floating panel geometry (and with it the host-drawn titlebar/resize).
@@ -274,7 +352,13 @@ async fn main() -> anyhow::Result<()> {
         floating_panel_geom(win_w, win_h)
     };
     let mut stamped = false;
+    let mut content_stamped = false;
+    let mut content_stamp_layer = overlay_layer.max(1);
+    let mut overlay_last_pos: Option<(f32, f32)> = None;
+    let mut content_last_pos: Option<(f32, f32)> = None;
     let mut content_blank = true;
+    // Shell `browser.openSession` / `closeSession` — CEF dual OSR stays alive.
+    let mut browser_session_open = false;
     let mut focus_target = CefFocusTarget::Chrome;
     let mut mode = SessionMode::Hidden;
     let mut hotkey = Hotkey::default();
@@ -284,9 +368,14 @@ async fn main() -> anyhow::Result<()> {
     let mut parked = owns_session;
     // Shell React BrowserPanel hole — window-space rect for content OSR + hit-test.
     let mut content_hole: Option<(i32, i32, u32, u32)> = None;
+    let mut promo: Option<PromoDrag> = None;
+    let mut promo_stamped = false;
+    let mut last_chrome_share: Option<(u64, u32, u32)> = None;
     // Sticky target while a button is held (shell resize/drag must not lose
     // events when the cursor slips into the content hole).
     let mut mouse_capture: Option<CefFocusTarget> = None;
+    // React AppWindow move/resize — force chrome routing over content hole.
+    let mut shell_drag = false;
     let mut titlebar_drag: Option<(i32, i32)> = None;
     let mut resize_drag: Option<ResizeDrag> = None;
     let mut last_cursor = Cursor::Default;
@@ -363,6 +452,7 @@ async fn main() -> anyhow::Result<()> {
         browser_w,
         browser_h,
         true,
+        false,
         &mut next_layout_generation,
         &mut last_sent_generation,
         &mut last_bounds_sent,
@@ -376,7 +466,10 @@ async fn main() -> anyhow::Result<()> {
     // Shell UiMessage `connection` — same shape as former Electron overlay-session.
     // Best-effort early push; metrics tick re-pushes once the page is listening.
     if let Some(pid) = game_pid {
-        if let Err(err) = cef.send_bridge_push(connection_json(pid)).await {
+        if let Err(err) = cef
+            .send_bridge_push(connection_json(pid, session_info.as_ref(), attach_epoch_ms))
+            .await
+        {
             warn!(%err, "connection push failed");
         }
     }
@@ -388,9 +481,23 @@ async fn main() -> anyhow::Result<()> {
 
     let mut metrics_tick = tokio::time::interval(METRICS_PUSH_INTERVAL);
     metrics_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut heartbeat_tick = tokio::time::interval(HEARTBEAT_INTERVAL);
+    heartbeat_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_heartbeat: Option<(Instant, bool, HotkeyChord)> = None;
 
     loop {
         tokio::select! {
+            _ = heartbeat_tick.tick() => {
+                if owns_session {
+                    publish_visibility_heartbeat(
+                        &mut conn,
+                        win_id,
+                        mode == SessionMode::Interactive,
+                        &mut last_heartbeat,
+                    )
+                    .await;
+                }
+            }
             _ = metrics_tick.tick() => {
                 // Electron flashToastHud expiry → drop back to Hidden when no pins.
                 if let Some(until) = toast_until {
@@ -407,7 +514,12 @@ async fn main() -> anyhow::Result<()> {
                 // Electron parity: connection rides the metrics pump so a late
                 // shell mount still sees pid/connected (all modes; ≤1 Hz).
                 if let Some(pid) = game_pid {
-                    let _ = cef.send_bridge_push(connection_json(pid)).await;
+                    if session_info.is_none() {
+                        session_info = load_session_snapshot(game_pid);
+                    }
+                    let _ = cef
+                        .send_bridge_push(connection_json(pid, session_info.as_ref(), attach_epoch_ms))
+                        .await;
                 }
                 if !matches!(mode, SessionMode::Interactive | SessionMode::HudPinned) {
                     continue;
@@ -464,13 +576,22 @@ async fn main() -> anyhow::Result<()> {
                         parked = true;
                         resize_drag = None;
                         titlebar_drag = None;
+                        last_chrome_share = None;
                         info!(overlay_layer, "park — clear layer, keep CEF alive");
-                        clear_layer(
+                        clear_both_layers(
                             &mut conn,
                             &mut surface,
+                            &mut content_surface,
+                            &mut promo_surface,
                             win_id,
                             overlay_layer,
+                            content_stamp_layer,
                             &mut stamped,
+                            &mut content_stamped,
+                            &mut promo,
+                            &mut promo_stamped,
+                            &mut overlay_last_pos,
+                            &mut content_last_pos,
                         )
                         .await;
                         last_cursor = Cursor::Default;
@@ -501,6 +622,7 @@ async fn main() -> anyhow::Result<()> {
                             browser_w,
                             browser_h,
                             true,
+                            false,
                             &mut next_layout_generation,
                             &mut last_sent_generation,
                             &mut last_bounds_sent,
@@ -527,6 +649,13 @@ async fn main() -> anyhow::Result<()> {
                             .window(win_id)
                             .request(BlockInput { block: interactive })
                             .await;
+                        publish_visibility_heartbeat(
+                            &mut conn,
+                            win_id,
+                            interactive,
+                            &mut last_heartbeat,
+                        )
+                        .await;
                         let listened = conn
                             .window(win_id)
                             .request(ListenInput {
@@ -591,6 +720,7 @@ async fn main() -> anyhow::Result<()> {
                         h,
                         handle,
                         layout_generation,
+                        layer,
                     }) => {
                         if parked {
                             continue;
@@ -598,26 +728,145 @@ async fn main() -> anyhow::Result<()> {
                         if layout_generation != last_sent_generation {
                             continue;
                         }
-                        // Same path as Electron layer 0: shared texture → UpdateLayerHandle.
-                        if let Err(err) = stamp_layer(
-                            &mut conn,
-                            &mut surface,
-                            win_id,
-                            overlay_layer,
-                            &mut stamped,
-                            w,
-                            h,
-                            handle,
-                        )
-                        .await
-                        {
-                            warn!(%err, "stamp failed");
-                            clear_layer(&mut conn, &mut surface, win_id, overlay_layer, &mut stamped).await;
+                        match layer {
+                            None => {
+                                // Legacy composite (no Paint.layer): one fullscreen handle.
+                                if let Err(err) = stamp_layer(
+                                    &mut conn,
+                                    &mut surface,
+                                    win_id,
+                                    overlay_layer,
+                                    &mut stamped,
+                                    w,
+                                    h,
+                                    handle,
+                                    Some((pos_x, pos_y)),
+                                    &mut overlay_last_pos,
+                                )
+                                .await
+                                {
+                                    warn!(%err, "stamp failed");
+                                    clear_layer(
+                                        &mut conn,
+                                        &mut surface,
+                                        win_id,
+                                        overlay_layer,
+                                        &mut stamped,
+                                    )
+                                    .await;
+                                    overlay_last_pos = None;
+                                }
+                            }
+                            Some(0) => {
+                                // ContentOnly spike: no shell CEF atlas — ignore layer 0.
+                                if !expects_shell_cef_layer0(osr_topology) {
+                                    continue;
+                                }
+                                let (chrome_layer, dest) = chrome_dest_publish(
+                                    owns_session,
+                                    overlay_layer,
+                                    pos_x,
+                                    pos_y,
+                                );
+                                if let Err(err) = stamp_layer(
+                                    &mut conn,
+                                    &mut surface,
+                                    win_id,
+                                    chrome_layer,
+                                    &mut stamped,
+                                    w,
+                                    h,
+                                    handle,
+                                    dest,
+                                    &mut overlay_last_pos,
+                                )
+                                .await
+                                {
+                                    warn!(%err, "stamp failed");
+                                    last_chrome_share = None;
+                                    clear_layer(
+                                        &mut conn,
+                                        &mut surface,
+                                        win_id,
+                                        chrome_layer,
+                                        &mut stamped,
+                                    )
+                                    .await;
+                                    overlay_last_pos = None;
+                                } else {
+                                    last_chrome_share = Some((handle, w, h));
+                                }
+                            }
+                            // content_blank: skip new content paints but keep
+                            // last-good stamp (nav / CEF blank gate). Clear only
+                            // on close, hole drop, or intentional about:blank.
+                            Some(_layer) if content_blank => {}
+                            Some(layer) => {
+                                // ShellOnly: page is in-shell iframe — no second OSR layer.
+                                if !expects_content_cef_layer(osr_topology) {
+                                    continue;
+                                }
+                                content_stamp_layer = content_surface_layer(layer);
+                                let draw_pos = promo
+                                    .as_ref()
+                                    .and_then(|p| p.hole_pos)
+                                    .unwrap_or_else(|| {
+                                        content_draw_pos(
+                                            w,
+                                            h,
+                                            browser_w,
+                                            browser_h,
+                                            content_hole,
+                                            chrome_top_px,
+                                        )
+                                    });
+                                if let Err(err) = stamp_layer(
+                                    &mut conn,
+                                    &mut content_surface,
+                                    win_id,
+                                    layer,
+                                    &mut content_stamped,
+                                    w,
+                                    h,
+                                    handle,
+                                    Some(draw_pos),
+                                    &mut content_last_pos,
+                                )
+                                .await
+                                {
+                                    warn!(%err, "stamp failed");
+                                    clear_layer(
+                                        &mut conn,
+                                        &mut content_surface,
+                                        win_id,
+                                        layer,
+                                        &mut content_stamped,
+                                    )
+                                    .await;
+                                    content_last_pos = None;
+                                }
+                            }
                         }
                     }
                     Some(CefEvent::PaintError { msg }) => {
                         warn!(%msg, "CEF paintError");
-                        clear_layer(&mut conn, &mut surface, win_id, overlay_layer, &mut stamped).await;
+                        last_chrome_share = None;
+                        clear_both_layers(
+                            &mut conn,
+                            &mut surface,
+                            &mut content_surface,
+                            &mut promo_surface,
+                            win_id,
+                            overlay_layer,
+                            content_stamp_layer,
+                            &mut stamped,
+                            &mut content_stamped,
+                            &mut promo,
+                            &mut promo_stamped,
+                            &mut overlay_last_pos,
+                            &mut content_last_pos,
+                        )
+                        .await;
                         // UpdateLayerHandle(None) cleared input_rect — restore before next stamp.
                         let _ = sync_inner_bounds(
                             &mut conn,
@@ -629,6 +878,7 @@ async fn main() -> anyhow::Result<()> {
                             browser_w,
                             browser_h,
                             true,
+                            false,
                             &mut next_layout_generation,
                             &mut last_sent_generation,
                             &mut last_bounds_sent,
@@ -638,12 +888,20 @@ async fn main() -> anyhow::Result<()> {
                     Some(CefEvent::Host(action)) => {
                         if action.action == "close" {
                             info!("CEF host close");
-                            clear_layer(
+                            clear_both_layers(
                                 &mut conn,
                                 &mut surface,
+                                &mut content_surface,
+                                &mut promo_surface,
                                 win_id,
                                 overlay_layer,
+                                content_stamp_layer,
                                 &mut stamped,
+                                &mut content_stamped,
+                                &mut promo,
+                                &mut promo_stamped,
+                                &mut overlay_last_pos,
+                                &mut content_last_pos,
                             )
                             .await;
                             let _ = cef.shutdown().await;
@@ -665,6 +923,7 @@ async fn main() -> anyhow::Result<()> {
                                 browser_w,
                                 browser_h,
                                 true,
+                                false,
                                 &mut next_layout_generation,
                                 &mut last_sent_generation,
                                 &mut last_bounds_sent,
@@ -679,8 +938,15 @@ async fn main() -> anyhow::Result<()> {
                         can_go_back,
                         can_go_forward,
                     }) => {
-                        content_blank = url.is_empty() || url == "about:blank";
+                        apply_nav_state_blank(
+                            browser_session_open,
+                            content_hole,
+                            &url,
+                            &mut content_blank,
+                        );
                         debug!(%url, content_blank, "cef navState");
+                        // Do not clear content stamp on NavState — keep last-good
+                        // until a new paint replaces it (or close / hole / about:blank).
                         // Shell/SDK UiMessage shape (`sdk/bridge` browser.navState).
                         if let Err(err) = cef
                             .send_bridge_push(
@@ -746,6 +1012,7 @@ async fn main() -> anyhow::Result<()> {
                                         &mut focus_target,
                                         &mut content_hole,
                                         &mut content_blank,
+                                        &mut browser_session_open,
                                     )
                                     .await
                                     {
@@ -757,6 +1024,30 @@ async fn main() -> anyhow::Result<()> {
                                         {
                                             warn!(%err, "bridge result send failed");
                                         }
+                                    }
+                                    if method == "browser.setContentRect" {
+                                        sync_content_hole_stamp(
+                                            &mut conn,
+                                            &mut content_surface,
+                                            win_id,
+                                            content_stamp_layer,
+                                            content_hole,
+                                            content_blank,
+                                            &mut content_stamped,
+                                            &mut content_last_pos,
+                                        )
+                                        .await;
+                                    } else if content_blank && content_stamped {
+                                        // closeSession (plugin path) etc.
+                                        clear_layer(
+                                            &mut conn,
+                                            &mut content_surface,
+                                            win_id,
+                                            content_stamp_layer,
+                                            &mut content_stamped,
+                                        )
+                                        .await;
+                                        content_last_pos = None;
                                     }
                                 }
                             }
@@ -775,11 +1066,14 @@ async fn main() -> anyhow::Result<()> {
                                 let _ = ctrl_tx.send(HostCtrl::Mode(next));
                                 Ok(String::new())
                             }
-                            // Browser nav — bridge → CEF content frame
-                            // (`contracts/host-bridge.md` rule 4).
+                            // Browser nav — bridge → CEF content frame only
+                            // (`contracts/host-bridge.md` rule 4). Never chrome Navigate.
                             "browser.navigate" if plugin_id.is_empty() => {
                                 match serde_json::from_str::<(String,)>(&args_json) {
                                     Ok((url,)) => {
+                                        // Intentional about:blank (new tab) still blanks
+                                        // here; apply_nav_state_blank only filters stale
+                                        // NavState while a live hole is published.
                                         content_blank =
                                             url.is_empty() || url == "about:blank";
                                         nav_ack(cef.content_navigate(url).await)
@@ -798,15 +1092,56 @@ async fn main() -> anyhow::Result<()> {
                             "browser.goForward" if plugin_id.is_empty() => {
                                 nav_ack(cef.go_forward().await)
                             }
+                            // Chrome-style extension satellites (not content_ OSR).
+                            // Fail closed: send errors / CEF reject must not clear_both_layers.
+                            "browser.extensions.openOptions" if plugin_id.is_empty() => {
+                                match browser_extensions::parse_open_satellite_id(
+                                    "browser.extensions.openOptions",
+                                    &args_json,
+                                ) {
+                                    Ok(id) => nav_ack(
+                                        cef.open_extension_satellite(
+                                            id,
+                                            cef_child::ExtensionSatelliteKind::Options,
+                                        )
+                                        .await,
+                                    ),
+                                    Err(err) => Err(err),
+                                }
+                            }
+                            "browser.extensions.openPopup" if plugin_id.is_empty() => {
+                                match browser_extensions::parse_open_satellite_id(
+                                    "browser.extensions.openPopup",
+                                    &args_json,
+                                ) {
+                                    Ok(id) => nav_ack(
+                                        cef.open_extension_satellite(
+                                            id,
+                                            cef_child::ExtensionSatelliteKind::Popup,
+                                        )
+                                        .await,
+                                    ),
+                                    Err(err) => Err(err),
+                                }
+                            }
+                            "browser.extensions.closeSatellite" if plugin_id.is_empty() => {
+                                match browser_extensions::parse_close_satellite(&args_json) {
+                                    Ok(()) => nav_ack(cef.close_extension_satellite().await),
+                                    Err(err) => Err(err),
+                                }
+                            }
                             // Shell React Browser AppWindow lifecycle (content hole).
                             "browser.openSession" if plugin_id.is_empty() => {
                                 if !owns_session {
                                     Err("browser.openSession requires shell session owner".into())
                                 } else {
+                                    let _ = browser_session_mark_open(&mut browser_session_open);
                                     if mode != SessionMode::Interactive {
                                         let _ =
                                             ctrl_tx.send(HostCtrl::Mode(SessionMode::Interactive));
                                     }
+                                    // Always push (idempotent): chrome re-publishes the
+                                    // content hole after close / minimize restore.
                                     if let Err(err) = cef
                                         .send_bridge_push(
                                             serde_json::json!({
@@ -822,30 +1157,98 @@ async fn main() -> anyhow::Result<()> {
                                     Ok(String::new())
                                 }
                             }
-                            "browser.closeSession" if plugin_id.is_empty() => {
-                                content_hole = None;
-                                mouse_capture = None;
-                                let _ = cef.set_content_rect(None).await;
-                                let _ = cef.content_navigate("about:blank".into()).await;
-                                content_blank = true;
-                                if focus_target != CefFocusTarget::Chrome {
-                                    let _ = cef.set_focus(false, focus_target).await;
-                                    let _ = cef.set_focus(true, CefFocusTarget::Chrome).await;
-                                    focus_target = CefFocusTarget::Chrome;
-                                }
-                                if let Err(err) = cef
-                                    .send_bridge_push(
-                                        serde_json::json!({
-                                            "type": "browserSession",
-                                            "open": false,
-                                        })
-                                        .to_string(),
-                                    )
-                                    .await
-                                {
-                                    warn!(%err, "browserSession close push failed");
+                            "native.overlay.setShellDrag" if plugin_id.is_empty() => {
+                                let args: Vec<Value> =
+                                    serde_json::from_str(&args_json).unwrap_or_default();
+                                shell_drag =
+                                    args.first().and_then(|v| v.as_bool()).unwrap_or(false);
+                                if shell_drag {
+                                    mouse_capture = Some(CefFocusTarget::Chrome);
                                 }
                                 Ok(String::new())
+                            }
+                            "native.overlay.setPosition" if plugin_id.is_empty() => {
+                                match parse_set_position(&args_json) {
+                                    Ok(args) => {
+                                        let op = position_op(
+                                            owns_session,
+                                            overlay_layer,
+                                            promo.as_ref().map(|p| (p.layer, p.size.0, p.size.1)),
+                                            args,
+                                            (browser_w, browser_h),
+                                        );
+                                        match apply_position_op(
+                                            op,
+                                            &mut conn,
+                                            &mut cef,
+                                            &mut surface,
+                                            &mut promo_surface,
+                                            win_id,
+                                            overlay_layer,
+                                            content_stamp_layer,
+                                            content_hole,
+                                            last_chrome_share,
+                                            &mut promo,
+                                            &mut promo_stamped,
+                                            &mut pos_x,
+                                            &mut pos_y,
+                                            &mut browser_w,
+                                            &mut browser_h,
+                                            &mut next_layout_generation,
+                                            &mut last_sent_generation,
+                                            &mut last_bounds_sent,
+                                        )
+                                        .await
+                                        {
+                                            Ok(()) => Ok(String::new()),
+                                            Err(err) => Err(err.to_string()),
+                                        }
+                                    }
+                                    Err(err) => Err(err),
+                                }
+                            }
+                            "browser.closeSession" if plugin_id.is_empty() => {
+                                if !browser_session_mark_close(
+                                    &mut browser_session_open,
+                                    &mut content_hole,
+                                    &mut content_blank,
+                                ) {
+                                    // Already closed — do not blank chrome or restart CEF.
+                                    Ok(String::new())
+                                } else {
+                                    mouse_capture = None;
+                                    let _ = cef.set_content_rect(None).await;
+                                    let _ = cef.content_navigate("about:blank".into()).await;
+                                    if focus_target != CefFocusTarget::Chrome {
+                                        let _ = cef.set_focus(false, focus_target).await;
+                                        let _ = cef.set_focus(true, CefFocusTarget::Chrome).await;
+                                        focus_target = CefFocusTarget::Chrome;
+                                    }
+                                    if content_stamped {
+                                        clear_layer(
+                                            &mut conn,
+                                            &mut content_surface,
+                                            win_id,
+                                            content_stamp_layer,
+                                            &mut content_stamped,
+                                        )
+                                        .await;
+                                        content_last_pos = None;
+                                    }
+                                    if let Err(err) = cef
+                                        .send_bridge_push(
+                                            serde_json::json!({
+                                                "type": "browserSession",
+                                                "open": false,
+                                            })
+                                            .to_string(),
+                                        )
+                                        .await
+                                    {
+                                        warn!(%err, "browserSession close push failed");
+                                    }
+                                    Ok(String::new())
+                                }
                             }
                             _ => {
                                 let result =
@@ -876,15 +1279,58 @@ async fn main() -> anyhow::Result<()> {
                         if let Err(err) = cef.send_bridge_result(request_id, result).await {
                             warn!(%err, "bridge result send failed");
                         }
+                        // Intentional about:blank navigate only — never clear on
+                        // reload/back/focus or transient NavState blank flags.
+                        if method == "browser.navigate" && content_blank && content_stamped {
+                            clear_layer(
+                                &mut conn,
+                                &mut content_surface,
+                                win_id,
+                                content_stamp_layer,
+                                &mut content_stamped,
+                            )
+                            .await;
+                            content_last_pos = None;
+                        }
                     }
                     Some(CefEvent::Exit(code)) => {
                         warn!(?code, "CEF exited");
-                        clear_layer(&mut conn, &mut surface, win_id, overlay_layer, &mut stamped).await;
+                        clear_both_layers(
+                            &mut conn,
+                            &mut surface,
+                            &mut content_surface,
+                            &mut promo_surface,
+                            win_id,
+                            overlay_layer,
+                            content_stamp_layer,
+                            &mut stamped,
+                            &mut content_stamped,
+                            &mut promo,
+                            &mut promo_stamped,
+                            &mut overlay_last_pos,
+                            &mut content_last_pos,
+                        )
+                        .await;
                         return Ok(());
                     }
                     None => {
                         warn!("CEF event channel closed");
-                        clear_layer(&mut conn, &mut surface, win_id, overlay_layer, &mut stamped).await;
+                        clear_both_layers(
+                            &mut conn,
+                            &mut surface,
+                            &mut content_surface,
+                            &mut promo_surface,
+                            win_id,
+                            overlay_layer,
+                            content_stamp_layer,
+                            &mut stamped,
+                            &mut content_stamped,
+                            &mut promo,
+                            &mut promo_stamped,
+                            &mut overlay_last_pos,
+                            &mut content_last_pos,
+                        )
+                        .await;
                         return Ok(());
                     }
                 }
@@ -892,7 +1338,22 @@ async fn main() -> anyhow::Result<()> {
             ev = events.recv() => {
                 let Some(ev) = ev else {
                     info!("pipe closed");
-                    clear_layer(&mut conn, &mut surface, win_id, overlay_layer, &mut stamped).await;
+                    clear_both_layers(
+                        &mut conn,
+                        &mut surface,
+                        &mut content_surface,
+                        &mut promo_surface,
+                        win_id,
+                        overlay_layer,
+                        content_stamp_layer,
+                        &mut stamped,
+                        &mut content_stamped,
+                        &mut promo,
+                        &mut promo_stamped,
+                        &mut overlay_last_pos,
+                        &mut content_last_pos,
+                    )
+                    .await;
                     let _ = cef.shutdown().await;
                     return Ok(());
                 };
@@ -928,6 +1389,7 @@ async fn main() -> anyhow::Result<()> {
                                 browser_w,
                                 browser_h,
                                 true,
+                                false,
                                 &mut next_layout_generation,
                                 &mut last_sent_generation,
                                 &mut last_bounds_sent,
@@ -953,6 +1415,8 @@ async fn main() -> anyhow::Result<()> {
                                     content_blank,
                                     content_hole,
                                     chrome_top_px,
+                                    osr_topology,
+                                    shell_drag,
                                     &mut focus_target,
                                     &mut mouse_capture,
                                 )
@@ -982,6 +1446,7 @@ async fn main() -> anyhow::Result<()> {
                                     browser_w,
                                     browser_h,
                                     force_flush,
+                                    false,
                                     &mut next_layout_generation,
                                     &mut last_sent_generation,
                                     &mut last_bounds_sent,
@@ -1010,12 +1475,13 @@ async fn main() -> anyhow::Result<()> {
                                     &mut conn,
                                     &mut cef,
                                     win_id,
-                                    overlay_layer,
+                                    overlay_layer.max(1),
                                     pos_x,
                                     pos_y,
                                     browser_w,
                                     browser_h,
                                     force_flush,
+                                    true,
                                     &mut next_layout_generation,
                                     &mut last_sent_generation,
                                     &mut last_bounds_sent,
@@ -1058,6 +1524,8 @@ async fn main() -> anyhow::Result<()> {
                                     content_blank,
                                     content_hole,
                                     chrome_top_px,
+                                    osr_topology,
+                                    shell_drag,
                                     &mut focus_target,
                                     &mut mouse_capture,
                                 )
@@ -1099,13 +1567,143 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Nav invokes carry no result — settle the promise once the op is queued.
-fn connection_json(pid: u32) -> String {
-    serde_json::json!({
+fn connection_json(
+    pid: u32,
+    session_info: Option<&(String, i64)>,
+    attached_epoch_ms: Option<i64>,
+) -> String {
+    let mut payload = serde_json::json!({
         "type": "connection",
         "connected": true,
         "pid": pid,
-    })
-    .to_string()
+    });
+    if let Some((name, seconds)) = session_info {
+        payload["gameName"] = serde_json::json!(name);
+        payload["playtimeSeconds"] = serde_json::json!(seconds);
+    }
+    if let Some(ms) = attached_epoch_ms {
+        payload["attachedAtMs"] = serde_json::json!(ms);
+    }
+    payload.to_string()
+}
+
+/// This game's entry in the launcher-written playtime sidecar
+/// (`%APPDATA%/Glint/session.json`). Any failure → None; chips hide.
+fn load_session_snapshot(game_pid: Option<u32>) -> Option<(String, i64)> {
+    let pid = game_pid?;
+    let appdata = std::env::var_os("APPDATA")?;
+    let path = std::path::PathBuf::from(appdata)
+        .join(glint_overlay_common::product::APP_DATA_DIR_NAME)
+        .join("session.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    parse_session_snapshot(&raw, pid)
+}
+
+fn parse_session_snapshot(raw: &str, pid: u32) -> Option<(String, i64)> {
+    let value = serde_json::from_str::<Value>(raw).ok()?;
+    let games = value
+        .get("games")?
+        .as_array()?
+        .iter()
+        .find(|g| g.get("pid").and_then(Value::as_u64) == Some(u64::from(pid)))?;
+    Some((
+        games.get("name")?.as_str()?.to_string(),
+        games.get("totalSeconds")?.as_i64()?,
+    ))
+}
+
+/// CEF OSR topology for overlay paint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OsrTopology {
+    /// Opt-in (`GLINT_CEF_SHELL_ONLY`): one shell CreateBrowser + iframe page.
+    /// Present stamps layer 0 only. Real sites often refuse framing (XFO).
+    ShellOnly,
+    /// Product default: shell layer 0 + content ≥1 (Steam-like: React chrome +
+    /// one content CEF surface for page pixels).
+    ShellHostAndContent,
+    /// Legacy spike (`GLINT_CEF_SINGLE_CONTENT_OSR`): content only — blanks shell.
+    ContentOnly,
+}
+
+fn osr_topology_from_env() -> OsrTopology {
+    match std::env::var("GLINT_CEF_SHELL_ONLY") {
+        Ok(v) if v == "1" || v.eq_ignore_ascii_case("y") => {
+            return OsrTopology::ShellOnly;
+        }
+        _ => {}
+    }
+    // Legacy alias: GLINT_CEF_DUAL_OSR=1 was the dual opt-in when ShellOnly was
+    // default — still accepted as dual (no-op when dual is already default).
+    match std::env::var("GLINT_CEF_SINGLE_CONTENT_OSR") {
+        Ok(v) if v == "1" || v.eq_ignore_ascii_case("y") => OsrTopology::ContentOnly,
+        _ => OsrTopology::ShellHostAndContent,
+    }
+}
+
+fn expects_shell_cef_layer0(topology: OsrTopology) -> bool {
+    matches!(
+        topology,
+        OsrTopology::ShellOnly | OsrTopology::ShellHostAndContent
+    )
+}
+
+fn expects_content_cef_layer(topology: OsrTopology) -> bool {
+    matches!(
+        topology,
+        OsrTopology::ShellHostAndContent | OsrTopology::ContentOnly
+    )
+}
+
+/// Content Present-blit layer index. Always ≥1 so hole compositing never
+/// collides with shell atlas layer 0 when both exist.
+fn content_surface_layer(paint_layer: u32) -> u32 {
+    paint_layer.max(1)
+}
+
+/// Whether `browser.setContentRect` may apply. Closed sessions ignore hole
+/// updates so unmount cleanup cannot fight a reopen.
+fn browser_session_accepts_content_rect(session_open: bool) -> bool {
+    session_open
+}
+
+/// Mark browser session open. Returns true if this call newly opened it.
+fn browser_session_mark_open(session_open: &mut bool) -> bool {
+    if *session_open {
+        return false;
+    }
+    *session_open = true;
+    true
+}
+
+/// Mark browser session closed and clear hole/blank bookkeeping. Returns true
+/// if this call newly closed it. Does not touch chrome layers or CEF process.
+fn browser_session_mark_close(
+    session_open: &mut bool,
+    content_hole: &mut Option<(i32, i32, u32, u32)>,
+    content_blank: &mut bool,
+) -> bool {
+    if !*session_open {
+        return false;
+    }
+    *session_open = false;
+    *content_hole = None;
+    *content_blank = true;
+    true
+}
+
+/// Apply content NavState URL to `content_blank`. Ignores stale `about:blank`
+/// from close while a live session still has a published content hole.
+fn apply_nav_state_blank(
+    session_open: bool,
+    content_hole: Option<(i32, i32, u32, u32)>,
+    url: &str,
+    content_blank: &mut bool,
+) {
+    let url_blank = url.is_empty() || url == "about:blank";
+    if url_blank && session_open && content_hole.is_some() {
+        return;
+    }
+    *content_blank = url_blank;
 }
 
 /// Plugin overlay/native/browser session methods. `None` = reply already queued
@@ -1125,6 +1723,7 @@ async fn dispatch_plugin_session(
     focus_target: &mut CefFocusTarget,
     content_hole: &mut Option<(i32, i32, u32, u32)>,
     content_blank: &mut bool,
+    browser_session_open: &mut bool,
 ) -> Option<Result<String, String>> {
     let mode_changing = matches!(
         method,
@@ -1134,9 +1733,7 @@ async fn dispatch_plugin_session(
             | "native.window.setMode"
     );
     if mode_changing && !owns_session {
-        return Some(Err(
-            "overlay session not owned by CEF host".into(),
-        ));
+        return Some(Err("overlay session not owned by CEF host".into()));
     }
 
     let queue_mode = |next: SessionMode, result: Result<String, String>| {
@@ -1147,14 +1744,12 @@ async fn dispatch_plugin_session(
     };
 
     match method {
-        "overlay.isOpen" => Some(Ok(
-            if mode == SessionMode::Interactive {
-                "true"
-            } else {
-                "false"
-            }
-            .into(),
-        )),
+        "overlay.isOpen" => Some(Ok(if mode == SessionMode::Interactive {
+            "true"
+        } else {
+            "false"
+        }
+        .into())),
         "overlay.open" => {
             if mode != SessionMode::Interactive {
                 queue_mode(SessionMode::Interactive, Ok(String::new()));
@@ -1173,10 +1768,7 @@ async fn dispatch_plugin_session(
             }
         }
         "native.window.getSnapshot" => {
-            let keys = pins
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default();
+            let keys = pins.lock().map(|g| g.clone()).unwrap_or_default();
             Some(Ok(plugin_ipc::window_snapshot_json(
                 mode.as_str(),
                 &keys,
@@ -1189,9 +1781,8 @@ async fn dispatch_plugin_session(
             } else {
                 SessionMode::Interactive
             };
-            let body = Ok(serde_json::to_string(next.as_str()).unwrap_or_else(|_| {
-                format!("\"{}\"", next.as_str())
-            }));
+            let body = Ok(serde_json::to_string(next.as_str())
+                .unwrap_or_else(|_| format!("\"{}\"", next.as_str())));
             queue_mode(next, body);
             None
         }
@@ -1203,9 +1794,7 @@ async fn dispatch_plugin_session(
             let name = match args.first().and_then(|v| v.as_str()) {
                 Some(s) => s,
                 None => {
-                    return Some(Err(
-                        "native.window.setMode requires mode string".into(),
-                    ));
+                    return Some(Err("native.window.setMode requires mode string".into()));
                 }
             };
             let next = match SessionMode::parse(name) {
@@ -1214,9 +1803,8 @@ async fn dispatch_plugin_session(
                     return Some(Err(format!("invalid overlay mode: {name}")));
                 }
             };
-            let body = Ok(serde_json::to_string(next.as_str()).unwrap_or_else(|_| {
-                format!("\"{}\"", next.as_str())
-            }));
+            let body = Ok(serde_json::to_string(next.as_str())
+                .unwrap_or_else(|_| format!("\"{}\"", next.as_str())));
             queue_mode(next, body);
             None
         }
@@ -1237,10 +1825,7 @@ async fn dispatch_plugin_session(
         "native.overlay.blockInput" => {
             let args: Vec<Value> = serde_json::from_str(args_json).unwrap_or_default();
             let block = args.first().and_then(|v| v.as_bool()).unwrap_or(false);
-            let blocked = conn
-                .window(win_id)
-                .request(BlockInput { block })
-                .await;
+            let blocked = conn.window(win_id).request(BlockInput { block }).await;
             if !matches!(blocked, Ok(true)) {
                 warn!(?blocked, "DLL rejected BlockInput (plugin)");
             }
@@ -1267,7 +1852,12 @@ async fn dispatch_plugin_session(
             Some(Ok(String::new()))
         }
         "browser.blur" => {
-            let _ = cef.set_focus(false, *focus_target).await;
+            // Leave a defined chrome target (URL/toolbar). Blurring content
+            // alone left focus_target stale → keys still routed to content.
+            if let Some(prev) = blur_grants_chrome(focus_target) {
+                let _ = cef.set_focus(false, prev).await;
+                let _ = cef.set_focus(true, CefFocusTarget::Chrome).await;
+            }
             Some(Ok(String::new()))
         }
         "browser.setContentRect" => {
@@ -1275,12 +1865,16 @@ async fn dispatch_plugin_session(
                 Ok(h) => h,
                 Err(err) => return Some(Err(err)),
             };
+            // Unmount cleanup after closeSession must not fight a reopen.
+            if !browser_session_accepts_content_rect(*browser_session_open) {
+                return Some(Ok(String::new()));
+            }
             *content_hole = hole;
             if let Err(err) = cef.set_content_rect(hole).await {
                 return Some(Err(err.to_string()));
             }
             // Hole clear parks hit-testing (HudPinned ghost). Hole restore must
-            // re-enable Content routing — previously navigate did that as a side
+            // re-enable Content routing -- previously navigate did that as a side
             // effect; Shift+Tab must not LoadURL just to flip this flag.
             *content_blank = hole.is_none();
             Some(Ok(String::new()))
@@ -1288,9 +1882,10 @@ async fn dispatch_plugin_session(
         "browser.openSession" => {
             if !owns_session {
                 return Some(Err(
-                    "browser.openSession requires shell session owner".into(),
+                    "browser.openSession requires shell session owner".into()
                 ));
             }
+            let _ = browser_session_mark_open(browser_session_open);
             if mode != SessionMode::Interactive {
                 queue_mode(SessionMode::Interactive, Ok(String::new()));
                 None
@@ -1299,10 +1894,11 @@ async fn dispatch_plugin_session(
             }
         }
         "browser.closeSession" => {
-            *content_hole = None;
+            if !browser_session_mark_close(browser_session_open, content_hole, content_blank) {
+                return Some(Ok(String::new()));
+            }
             let _ = cef.set_content_rect(None).await;
             let _ = cef.content_navigate("about:blank".into()).await;
-            *content_blank = true;
             if *focus_target != CefFocusTarget::Chrome {
                 let _ = cef.set_focus(false, *focus_target).await;
                 let _ = cef.set_focus(true, CefFocusTarget::Chrome).await;
@@ -1315,21 +1911,19 @@ async fn dispatch_plugin_session(
 }
 
 fn parse_content_rect(args_json: &str) -> Result<Option<(i32, i32, u32, u32)>, String> {
-    let args: Vec<Value> = serde_json::from_str(args_json)
-        .map_err(|e| format!("browser.setContentRect args: {e}"))?;
+    let args: Vec<Value> =
+        serde_json::from_str(args_json).map_err(|e| format!("browser.setContentRect args: {e}"))?;
     match args.first() {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Object(map)) => {
             let x = map
                 .get("x")
                 .and_then(|v| v.as_f64())
-                .ok_or_else(|| "setContentRect.x required".to_string())?
-                as i32;
+                .ok_or_else(|| "setContentRect.x required".to_string())? as i32;
             let y = map
                 .get("y")
                 .and_then(|v| v.as_f64())
-                .ok_or_else(|| "setContentRect.y required".to_string())?
-                as i32;
+                .ok_or_else(|| "setContentRect.y required".to_string())? as i32;
             let width = map
                 .get("width")
                 .and_then(|v| v.as_f64())
@@ -1348,6 +1942,193 @@ fn parse_content_rect(args_json: &str) -> Result<Option<(i32, i32, u32, u32)>, S
     }
 }
 
+/// Titlebar-drag promo: cropped atlas snapshot on a dest-capable layer.
+/// Exact window rect only — a shadow pad pulled in neighboring atlas pixels
+/// (Metrics/dock) and dragged them with the window.
+struct PromoDrag {
+    layer: u32,
+    origin: (f32, f32),
+    size: (u32, u32),
+    pad: (f32, f32),
+    hole: Option<(i32, i32, u32, u32)>,
+    hole_pos: Option<(f32, f32)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SetPositionArgs {
+    End,
+    Dest { x: f32, y: f32 },
+    Size { x: f32, y: f32, w: u32, h: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PositionOp {
+    Ack,
+    EndPromo,
+    Promote {
+        layer: u32,
+        x: f32,
+        y: f32,
+        w: u32,
+        h: u32,
+    },
+    DestPromo {
+        layer: u32,
+        x: f32,
+        y: f32,
+        w: u32,
+        h: u32,
+    },
+    Floating {
+        layer: u32,
+        x: f32,
+        y: f32,
+        w: u32,
+        h: u32,
+        dest_only: bool,
+    },
+}
+
+fn promo_layer_id(overlay_layer: u32) -> u32 {
+    overlay_layer.saturating_add(1).max(2)
+}
+
+fn hole_owned_by_window(hole: (i32, i32, u32, u32), x: f32, y: f32, w: u32, h: u32) -> bool {
+    let (hx, hy, hw, hh) = hole;
+    let wx = x.round() as i32;
+    let wy = y.round() as i32;
+    hx >= wx
+        && hy >= wy
+        && hx.saturating_add_unsigned(hw) <= wx.saturating_add_unsigned(w)
+        && hy.saturating_add_unsigned(hh) <= wy.saturating_add_unsigned(h)
+}
+
+fn translate_rect(
+    start: (i32, i32, u32, u32),
+    from: (f32, f32),
+    to: (f32, f32),
+) -> (f32, f32, u32, u32) {
+    (
+        start.0 as f32 + (to.0 - from.0),
+        start.1 as f32 + (to.1 - from.1),
+        start.2,
+        start.3,
+    )
+}
+
+fn visual_window_crop(
+    x: f32,
+    y: f32,
+    w: u32,
+    h: u32,
+    atlas_w: u32,
+    atlas_h: u32,
+) -> Option<(Rect, (f32, f32))> {
+    let src = clamp_crop_rect(x, y, w, h, atlas_w, atlas_h)?;
+    Some((src, (0.0, 0.0)))
+}
+
+fn clamp_crop_rect(x: f32, y: f32, w: u32, h: u32, atlas_w: u32, atlas_h: u32) -> Option<Rect> {
+    if atlas_w == 0 || atlas_h == 0 || w == 0 || h == 0 {
+        return None;
+    }
+    let x = (x.round() as i32).clamp(0, atlas_w.saturating_sub(1) as i32) as u32;
+    let y = (y.round() as i32).clamp(0, atlas_h.saturating_sub(1) as i32) as u32;
+    Some(Rect {
+        x,
+        y,
+        width: w.min(atlas_w.saturating_sub(x)).max(1),
+        height: h.min(atlas_h.saturating_sub(y)).max(1),
+    })
+}
+
+/// `native.overlay.setPosition` args: empty/`null` ends promo; `[x,y]` dests;
+/// `[x,y,w,h]` promotes or ends after restore.
+fn parse_set_position(args_json: &str) -> Result<SetPositionArgs, String> {
+    let trimmed = args_json.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return Ok(SetPositionArgs::End);
+    }
+    let args: Value = serde_json::from_str(trimmed)
+        .map_err(|e| format!("native.overlay.setPosition args: {e}"))?;
+    match args {
+        Value::Null => Ok(SetPositionArgs::End),
+        Value::Array(items) if items.is_empty() || items.iter().all(|v| v.is_null()) => {
+            Ok(SetPositionArgs::End)
+        }
+        Value::Array(items) => {
+            let x = items
+                .first()
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| "native.overlay.setPosition needs x".to_string())?
+                as f32;
+            let y = items
+                .get(1)
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| "native.overlay.setPosition needs y".to_string())?
+                as f32;
+            match (
+                items.get(2).and_then(|v| v.as_f64()),
+                items.get(3).and_then(|v| v.as_f64()),
+            ) {
+                (Some(w), Some(h)) => Ok(SetPositionArgs::Size {
+                    x,
+                    y,
+                    w: w.round().max(1.0) as u32,
+                    h: h.round().max(1.0) as u32,
+                }),
+                _ => Ok(SetPositionArgs::Dest { x, y }),
+            }
+        }
+        _ => Err("native.overlay.setPosition expects an array".into()),
+    }
+}
+
+/// Shell never writes session origin. Promo dests layer ≥2; floating dests ≥1.
+fn position_op(
+    owns_session: bool,
+    overlay_layer: u32,
+    promo: Option<(u32, u32, u32)>,
+    args: SetPositionArgs,
+    fallback_wh: (u32, u32),
+) -> PositionOp {
+    if !owns_session {
+        return match args {
+            SetPositionArgs::End => PositionOp::Ack,
+            SetPositionArgs::Dest { x, y } => PositionOp::Floating {
+                layer: overlay_layer.max(1),
+                x,
+                y,
+                w: fallback_wh.0,
+                h: fallback_wh.1,
+                dest_only: true,
+            },
+            SetPositionArgs::Size { x, y, w, h } => PositionOp::Floating {
+                layer: overlay_layer.max(1),
+                x,
+                y,
+                w,
+                h,
+                dest_only: w == fallback_wh.0 && h == fallback_wh.1,
+            },
+        };
+    }
+    match (args, promo) {
+        (SetPositionArgs::End, _) | (SetPositionArgs::Size { .. }, Some(_)) => PositionOp::EndPromo,
+        (SetPositionArgs::Size { x, y, w, h }, None) => PositionOp::Promote {
+            layer: promo_layer_id(overlay_layer),
+            x,
+            y,
+            w,
+            h,
+        },
+        (SetPositionArgs::Dest { x, y }, Some((layer, w, h))) => {
+            PositionOp::DestPromo { layer, x, y, w, h }
+        }
+        (SetPositionArgs::Dest { .. }, None) => PositionOp::Ack,
+    }
+}
+
 fn parse_blocking_cursor(arg: Option<&Value>) -> Option<Cursor> {
     match arg {
         None | Some(Value::Null) => None,
@@ -1363,9 +2144,8 @@ fn parse_blocking_cursor(arg: Option<&Value>) -> Option<Cursor> {
 
 /// Map Electron/napi `Cursor` enum names (case-insensitive) via `Debug` labels.
 fn cursor_from_name(name: &str) -> Option<Cursor> {
-    (0u32..64).find_map(|d| {
-        Cursor::from_u32(d).filter(|c| format!("{c:?}").eq_ignore_ascii_case(name))
-    })
+    (0u32..64)
+        .find_map(|d| Cursor::from_u32(d).filter(|c| format!("{c:?}").eq_ignore_ascii_case(name)))
 }
 
 fn nav_ack(sent: anyhow::Result<()>) -> Result<String, String> {
@@ -1383,11 +2163,129 @@ async fn clear_layer(
     *stamped = false;
     let _ = conn
         .window(win_id)
+        .request(PaintCmd::DeleteChromePaintBuffer {
+            buffer_id: u64::from(layer),
+        })
+        .await;
+    let _ = conn
+        .window(win_id)
         .request(UpdateLayerHandle {
             layer,
             handle: None,
         })
         .await;
+}
+
+async fn clear_both_layers(
+    conn: &mut IpcClientConn,
+    chrome_surface: &mut OverlaySurface,
+    content_surface: &mut OverlaySurface,
+    promo_surface: &mut OverlaySurface,
+    win_id: u32,
+    overlay_layer: u32,
+    content_layer: u32,
+    chrome_stamped: &mut bool,
+    content_stamped: &mut bool,
+    promo: &mut Option<PromoDrag>,
+    promo_stamped: &mut bool,
+    overlay_last_pos: &mut Option<(f32, f32)>,
+    content_last_pos: &mut Option<(f32, f32)>,
+) {
+    // Dual-layer chrome is 0. Legacy Paint.layer=None stamps overlay_layer on
+    // the same surface — always release that slot too so park/teardown cannot
+    // leave the composite stuck.
+    clear_layer(conn, chrome_surface, win_id, 0, chrome_stamped).await;
+    if overlay_layer != 0 {
+        let _ = conn
+            .window(win_id)
+            .request(UpdateLayerHandle {
+                layer: overlay_layer,
+                handle: None,
+            })
+            .await;
+    }
+    clear_layer(
+        conn,
+        content_surface,
+        win_id,
+        content_layer,
+        content_stamped,
+    )
+    .await;
+    let promo_layer = promo
+        .as_ref()
+        .map(|p| p.layer)
+        .unwrap_or_else(|| promo_layer_id(overlay_layer));
+    clear_layer(conn, promo_surface, win_id, promo_layer, promo_stamped).await;
+    *promo = None;
+    *overlay_last_pos = None;
+    *content_last_pos = None;
+}
+
+/// Content layer dest origin. Hole rect wins whenever published (spec 5.1).
+fn content_draw_pos(
+    w: u32,
+    h: u32,
+    browser_w: u32,
+    browser_h: u32,
+    content_hole: Option<(i32, i32, u32, u32)>,
+    chrome_top_px: Option<u32>,
+) -> (f32, f32) {
+    if let Some((hx, hy, _, _)) = content_hole {
+        return (hx as f32, hy as f32);
+    }
+    if w >= browser_w && h >= browser_h {
+        return (0.0, 0.0);
+    }
+    if let Some(top) = chrome_top_px {
+        (0.0, top as f32)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+/// After `browser.setContentRect`: drop stamp when hole cleared; otherwise
+/// dest-only move content layer to the hole (resize still comes from CEF paint).
+async fn sync_content_hole_stamp(
+    conn: &mut IpcClientConn,
+    content_surface: &mut OverlaySurface,
+    win_id: u32,
+    content_stamp_layer: u32,
+    content_hole: Option<(i32, i32, u32, u32)>,
+    content_blank: bool,
+    content_stamped: &mut bool,
+    content_last_pos: &mut Option<(f32, f32)>,
+) {
+    if content_blank || content_hole.is_none() {
+        if *content_stamped {
+            clear_layer(
+                conn,
+                content_surface,
+                win_id,
+                content_stamp_layer,
+                content_stamped,
+            )
+            .await;
+            *content_last_pos = None;
+        }
+        return;
+    }
+    let Some((hx, hy, hw, hh)) = content_hole else {
+        return;
+    };
+    if !*content_stamped {
+        return;
+    }
+    let dest = (hx as f32, hy as f32);
+    if *content_last_pos == Some(dest) {
+        return;
+    }
+    if dest_layer_and_input(conn, win_id, content_stamp_layer.max(1), dest.0, dest.1, hw, hh)
+        .await
+        .is_ok()
+    {
+        *content_last_pos = Some(dest);
+    }
 }
 
 /// Default floating overlay panel size (matches non-shell browser host startup).
@@ -1400,9 +2298,250 @@ fn floating_panel_geom(win_w: u32, win_h: u32) -> (f32, f32, u32, u32) {
     )
 }
 
-/// Drive CEF inner window + overlay hit-test rect. Texture stays at (0,0).
-/// During drag, `force_flush=false` coalesces SetInnerBounds to ≤1 / 16ms;
-/// overlay input rect always updates. `force_flush=true` always sends.
+/// CEF `Some(0)` / dest-only publish. Shell atlas stays layer 0 with no dest.
+/// Floating panel stamps `overlay_layer.max(1)` at `(pos_x, pos_y)`.
+fn chrome_dest_publish(
+    owns_session: bool,
+    overlay_layer: u32,
+    pos_x: f32,
+    pos_y: f32,
+) -> (u32, Option<(f32, f32)>) {
+    if owns_session {
+        (0, None)
+    } else {
+        (overlay_layer.max(1), Some((pos_x, pos_y)))
+    }
+}
+
+/// `(set_bounds, pos+29, input_rect)`. Never dest layer 0.
+fn chrome_sync_cmds(layer: u32, dest_only: bool) -> (bool, bool, bool) {
+    let dest = layer >= 1;
+    (!dest_only, dest_only && dest, dest)
+}
+
+/// SetLayerPosition + opcode 29. No handle, no CEF set_bounds.
+async fn send_layer_dest(
+    conn: &mut IpcClientConn,
+    win_id: u32,
+    layer: u32,
+    x: f32,
+    y: f32,
+    w: u32,
+    h: u32,
+) -> anyhow::Result<()> {
+    conn.window(win_id)
+        .request(SetLayerPosition {
+            layer,
+            x: PercentLength::Length(x),
+            y: PercentLength::Length(y),
+        })
+        .await?;
+    let _ = conn
+        .window(win_id)
+        .request(PaintCmd::DrawChromePaintBufferRect {
+            buffer_id: u64::from(layer),
+            x,
+            y,
+            width: w as f32,
+            height: h as f32,
+        })
+        .await?;
+    Ok(())
+}
+
+async fn dest_layer_and_input(
+    conn: &mut IpcClientConn,
+    win_id: u32,
+    layer: u32,
+    x: f32,
+    y: f32,
+    w: u32,
+    h: u32,
+) -> anyhow::Result<()> {
+    send_layer_dest(conn, win_id, layer, x, y, w, h).await?;
+    let _ = conn
+        .window(win_id)
+        .request(SetLayerInputRect {
+            layer,
+            rect: Some(LayerInputRect {
+                x: PercentLength::Length(x),
+                y: PercentLength::Length(y),
+                width: w,
+                height: h,
+            }),
+        })
+        .await?;
+    Ok(())
+}
+
+async fn dest_promo_and_hole(
+    conn: &mut IpcClientConn,
+    win_id: u32,
+    hole_layer: u32,
+    promo: &mut PromoDrag,
+    x: f32,
+    y: f32,
+) -> anyhow::Result<()> {
+    dest_layer_and_input(
+        conn,
+        win_id,
+        promo.layer,
+        x - promo.pad.0,
+        y - promo.pad.1,
+        promo.size.0,
+        promo.size.1,
+    )
+    .await?;
+    if let Some(hole) = promo.hole {
+        let (hx, hy, hw, hh) = translate_rect(hole, promo.origin, (x, y));
+        dest_layer_and_input(conn, win_id, hole_layer.max(1), hx, hy, hw, hh).await?;
+        promo.hole_pos = Some((hx, hy));
+    }
+    Ok(())
+}
+
+fn crop_promo_update(
+    chrome: &OverlaySurface,
+    promo_surface: &mut OverlaySurface,
+    src: Rect,
+    last_chrome_share: Option<(u64, u32, u32)>,
+) -> anyhow::Result<Option<glint_overlay_common::request::UpdateSharedHandle>> {
+    match chrome.crop_rect(promo_surface, src) {
+        Ok(update) => Ok(update),
+        Err(err) => {
+            let Some((handle, _, _)) = last_chrome_share else {
+                return Err(err);
+            };
+            promo_surface.update_from_nt_shared(
+                src.width,
+                src.height,
+                handle,
+                Some(CopyRect {
+                    dst_x: 0,
+                    dst_y: 0,
+                    src,
+                }),
+            )
+        }
+    }
+}
+
+async fn apply_position_op(
+    op: PositionOp,
+    conn: &mut IpcClientConn,
+    cef: &mut CefSession,
+    chrome: &mut OverlaySurface,
+    promo_surface: &mut OverlaySurface,
+    win_id: u32,
+    overlay_layer: u32,
+    content_stamp_layer: u32,
+    content_hole: Option<(i32, i32, u32, u32)>,
+    last_chrome_share: Option<(u64, u32, u32)>,
+    promo: &mut Option<PromoDrag>,
+    promo_stamped: &mut bool,
+    pos_x: &mut f32,
+    pos_y: &mut f32,
+    browser_w: &mut u32,
+    browser_h: &mut u32,
+    next_layout_generation: &mut u32,
+    last_sent_generation: &mut u32,
+    last_bounds_sent: &mut Option<Instant>,
+) -> anyhow::Result<()> {
+    match op {
+        PositionOp::Ack => Ok(()),
+        PositionOp::EndPromo => {
+            let layer = promo
+                .as_ref()
+                .map(|p| p.layer)
+                .unwrap_or_else(|| promo_layer_id(overlay_layer));
+            clear_layer(conn, promo_surface, win_id, layer, promo_stamped).await;
+            *promo = None;
+            Ok(())
+        }
+        PositionOp::Promote { layer, x, y, w, h } => {
+            if layer < 2 {
+                anyhow::bail!("promo layer must be ≥ 2, got {layer}");
+            }
+            let (atlas_w, atlas_h) = chrome
+                .current_size()
+                .or_else(|| last_chrome_share.map(|(_, aw, ah)| (aw, ah)))
+                .ok_or_else(|| anyhow::anyhow!("no layer-0 mailbox to crop"))?;
+            let (src, pad) = visual_window_crop(x, y, w, h, atlas_w, atlas_h)
+                .ok_or_else(|| anyhow::anyhow!("promo crop empty"))?;
+            let update = crop_promo_update(chrome, promo_surface, src, last_chrome_share)?;
+            if let Some(update) = update {
+                let ok = conn
+                    .window(win_id)
+                    .request(UpdateLayerHandle {
+                        layer,
+                        handle: update.handle,
+                    })
+                    .await?;
+                if !ok {
+                    anyhow::bail!("UpdateLayerHandle promo layer {layer} returned false");
+                }
+            }
+            let hole = content_hole.filter(|rect| hole_owned_by_window(*rect, x, y, w, h));
+            let mut drag = PromoDrag {
+                layer,
+                origin: (x, y),
+                size: (src.width, src.height),
+                pad,
+                hole,
+                hole_pos: hole.map(|(hx, hy, _, _)| (hx as f32, hy as f32)),
+            };
+            dest_promo_and_hole(conn, win_id, content_stamp_layer, &mut drag, x, y).await?;
+            *promo_stamped = true;
+            *promo = Some(drag);
+            Ok(())
+        }
+        PositionOp::DestPromo {
+            layer: _,
+            x,
+            y,
+            w: _,
+            h: _,
+        } => {
+            let Some(drag) = promo.as_mut() else {
+                return Ok(());
+            };
+            dest_promo_and_hole(conn, win_id, content_stamp_layer, drag, x, y).await
+        }
+        PositionOp::Floating {
+            layer,
+            x,
+            y,
+            w,
+            h,
+            dest_only,
+        } => {
+            *pos_x = x;
+            *pos_y = y;
+            *browser_w = w;
+            *browser_h = h;
+            sync_inner_bounds(
+                conn,
+                cef,
+                win_id,
+                layer,
+                x,
+                y,
+                w,
+                h,
+                true,
+                dest_only,
+                next_layout_generation,
+                last_sent_generation,
+                last_bounds_sent,
+            )
+            .await
+        }
+    }
+}
+
+/// Drive CEF inner window + overlay hit-test rect.
+/// Dest-only: pos+29 if `layer ≥ 1`. Never `set_bounds`. Resize: throttle
+/// `set_bounds` (16 ms; `force_flush` on release). Input rect when `layer ≥ 1`.
 async fn sync_inner_bounds(
     conn: &mut IpcClientConn,
     cef: &mut CefSession,
@@ -1413,46 +2552,48 @@ async fn sync_inner_bounds(
     browser_w: u32,
     browser_h: u32,
     force_flush: bool,
+    dest_only: bool,
     next_layout_generation: &mut u32,
     last_sent_generation: &mut u32,
     last_bounds_sent: &mut Option<Instant>,
 ) -> anyhow::Result<()> {
-    let now = Instant::now();
-    let should_send = force_flush
-        || last_bounds_sent
-            .map(|t| now.duration_since(t) >= BOUNDS_THROTTLE)
-            .unwrap_or(true);
+    let (set_bounds, send_dest, input_rect) = chrome_sync_cmds(layer, dest_only);
+    if set_bounds {
+        let now = Instant::now();
+        let should_send = force_flush
+            || last_bounds_sent
+                .map(|t| now.duration_since(t) >= BOUNDS_THROTTLE)
+                .unwrap_or(true);
 
-    if should_send {
-        let layout_gen = *next_layout_generation;
-        *next_layout_generation = next_layout_generation.wrapping_add(1);
-        if *next_layout_generation == 0 {
-            *next_layout_generation = 1; // 0 = legacy on the wire
+        if should_send {
+            let layout_gen = *next_layout_generation;
+            *next_layout_generation = next_layout_generation.wrapping_add(1);
+            if *next_layout_generation == 0 {
+                *next_layout_generation = 1; // 0 = legacy on the wire
+            }
+            *last_sent_generation = layout_gen;
+            *last_bounds_sent = Some(now);
+            cef.set_bounds(pos_x as i32, pos_y as i32, browser_w, browser_h, layout_gen)
+                .await?;
         }
-        *last_sent_generation = layout_gen;
-        *last_bounds_sent = Some(now);
-        cef.set_bounds(
-            pos_x as i32,
-            pos_y as i32,
-            browser_w,
-            browser_h,
-            layout_gen,
-        )
-        .await?;
+    } else if send_dest {
+        send_layer_dest(conn, win_id, layer, pos_x, pos_y, browser_w, browser_h).await?;
     }
 
-    let _ = conn
-        .window(win_id)
-        .request(SetLayerInputRect {
-            layer,
-            rect: Some(LayerInputRect {
-                x: PercentLength::Length(pos_x),
-                y: PercentLength::Length(pos_y),
-                width: browser_w,
-                height: browser_h,
-            }),
-        })
-        .await?;
+    if input_rect {
+        let _ = conn
+            .window(win_id)
+            .request(SetLayerInputRect {
+                layer,
+                rect: Some(LayerInputRect {
+                    x: PercentLength::Length(pos_x),
+                    y: PercentLength::Length(pos_y),
+                    width: browser_w,
+                    height: browser_h,
+                }),
+            })
+            .await?;
+    }
     Ok(())
 }
 
@@ -1465,6 +2606,8 @@ async fn stamp_layer(
     w: u32,
     h: u32,
     handle: u64,
+    pos: Option<(f32, f32)>,
+    last_pos: &mut Option<(f32, f32)>,
 ) -> anyhow::Result<()> {
     if handle == 0 {
         anyhow::bail!("invalid CEF paint handle {handle}");
@@ -1472,39 +2615,38 @@ async fn stamp_layer(
     let stamp_w = w.max(1);
     let stamp_h = h.max(1);
 
-    let Some(update) = surface.update_from_nt_shared(stamp_w, stamp_h, handle, None)? else {
-        // Same shared texture updated in place — game already holds the handle.
-        return Ok(());
-    };
+    if let Some(update) = surface.update_from_nt_shared(stamp_w, stamp_h, handle, None)? {
+        let ok = conn
+            .window(win_id)
+            .request(UpdateLayerHandle {
+                layer,
+                handle: update.handle,
+            })
+            .await?;
+        if !ok {
+            anyhow::bail!("UpdateLayerHandle layer {layer} returned false");
+        }
+    }
 
-    // Fullscreen texture pinned at origin; hit-test uses SetLayerInputRect.
-    // Position sent once on first stamp; position never changes.
-
-    let ok = conn
-        .window(win_id)
-        .request(UpdateLayerHandle {
-            layer,
-            handle: update.handle,
-        })
-        .await?;
-    if !ok {
-        anyhow::bail!("UpdateLayerHandle layer {layer} returned false");
+    let dest = pos.unwrap_or((0.0, 0.0));
+    if pos.is_some() && *last_pos != pos {
+        send_layer_dest(conn, win_id, layer, dest.0, dest.1, stamp_w, stamp_h).await?;
+        *last_pos = pos;
+    } else {
+        let _ = conn
+            .window(win_id)
+            .request(PaintCmd::DrawChromePaintBufferRect {
+                buffer_id: u64::from(layer),
+                x: dest.0,
+                y: dest.1,
+                width: stamp_w as f32,
+                height: stamp_h as f32,
+            })
+            .await?;
     }
     if !*stamped {
         *stamped = true;
-        // Positioned at origin once — never changes. Avoid sending this IPC on
-        // every paint when the surface handle updates.
-        conn.window(win_id)
-            .request(SetLayerPosition {
-                layer,
-                x: PercentLength::Length(0.0),
-                y: PercentLength::Length(0.0),
-            })
-            .await?;
-        info!(
-            stamp_w,
-            stamp_h, handle, layer, "layer stamped fullscreen at (0,0)"
-        );
+        info!(stamp_w, stamp_h, handle, layer, ?pos, "layer stamped");
     }
     Ok(())
 }
@@ -1524,11 +2666,7 @@ fn hit_resize_edges(cx: i32, cy: i32, bw: i32, bh: i32) -> Option<ResizeEdges> {
         w: cx >= 0 && cx < RESIZE_EDGE_PX,
         e: cx >= bw - RESIZE_EDGE_PX && cx < bw,
     };
-    if edges.any() {
-        Some(edges)
-    } else {
-        None
-    }
+    if edges.any() { Some(edges) } else { None }
 }
 
 /// Returns `Some(force_flush)` while a resize drag is active / ends.
@@ -1836,7 +2974,22 @@ fn native_scan_code(vk: u8, extended: bool) -> u32 {
     if extended { scan | 0xE000 } else { scan }
 }
 
+/// `browser.blur` → chrome. Returns the previous non-chrome target to blur in CEF.
+fn blur_grants_chrome(focus_target: &mut CefFocusTarget) -> Option<CefFocusTarget> {
+    if *focus_target == CefFocusTarget::Chrome {
+        return None;
+    }
+    let prev = *focus_target;
+    *focus_target = CefFocusTarget::Chrome;
+    Some(prev)
+}
+
 /// Hit-test window coords against the content hole / chrome-top strip.
+/// Toolbar / URL / tabs (outside hole) → Chrome; interior of hole → Content.
+///
+/// ShellOnly: page is an in-shell iframe — **never** route Content via the
+/// legacy `chrome_top_px` strip (that subtracts Y and remaps Content→chrome_
+/// OsrClient → hit rides high above the visual cursor).
 fn resolve_cursor_target(
     wx: i32,
     wy: i32,
@@ -1845,23 +2998,31 @@ fn resolve_cursor_target(
     content_blank: bool,
     content_hole: Option<(i32, i32, u32, u32)>,
     chrome_top_px: Option<u32>,
+    topology: OsrTopology,
 ) -> (CefFocusTarget, i32, i32) {
-    if let Some((hx, hy, hw, hh)) = content_hole {
-        if !content_blank
-            && wx >= hx
-            && wy >= hy
-            && wx < hx + hw as i32
-            && wy < hy + hh as i32
-        {
-            return (CefFocusTarget::Content, wx - hx, wy - hy);
+    match topology {
+        OsrTopology::ShellOnly => (CefFocusTarget::Chrome, wx, wy),
+        OsrTopology::ContentOnly => (CefFocusTarget::Content, wx, wy),
+        OsrTopology::ShellHostAndContent => {
+            if let Some((hx, hy, hw, hh)) = content_hole {
+                if !content_blank
+                    && wx >= hx
+                    && wy >= hy
+                    && wx < hx + hw as i32
+                    && wy < hy + hh as i32
+                {
+                    return (CefFocusTarget::Content, wx - hx, wy - hy);
+                }
+                return (CefFocusTarget::Chrome, wx, wy);
+            }
+            // Dual OSR before hole arrives: crude toolbar strip (legacy).
+            match chrome_top_px {
+                Some(top) if !content_blank && cy >= top as i32 => {
+                    (CefFocusTarget::Content, cx, cy - top as i32)
+                }
+                _ => (CefFocusTarget::Chrome, wx, wy),
+            }
         }
-        return (CefFocusTarget::Chrome, wx, wy);
-    }
-    match chrome_top_px {
-        Some(top) if !content_blank && cy >= top as i32 => {
-            (CefFocusTarget::Content, cx, cy - top as i32)
-        }
-        _ => (CefFocusTarget::Chrome, wx, wy),
     }
 }
 
@@ -1894,6 +3055,8 @@ async fn forward_cursor(
     content_blank: bool,
     content_hole: Option<(i32, i32, u32, u32)>,
     chrome_top_px: Option<u32>,
+    topology: OsrTopology,
+    shell_drag: bool,
     focus_target: &mut CefFocusTarget,
     mouse_capture: &mut Option<CefFocusTarget>,
 ) {
@@ -1902,17 +3065,22 @@ async fn forward_cursor(
     let cy = cursor.client.y;
     let wx = cursor.window.x;
     let wy = cursor.window.y;
-    let geometric = resolve_cursor_target(
-        wx,
-        wy,
-        cx,
-        cy,
-        content_blank,
-        content_hole,
-        chrome_top_px,
-    );
-    let (target, lx, ly) =
-        apply_mouse_capture(*mouse_capture, geometric, wx, wy, content_hole);
+    // AppWindow move/resize: never hand the cursor to content OSR mid-drag.
+    let geometric = if shell_drag {
+        (CefFocusTarget::Chrome, wx, wy)
+    } else {
+        resolve_cursor_target(
+            wx,
+            wy,
+            cx,
+            cy,
+            content_blank,
+            content_hole,
+            chrome_top_px,
+            topology,
+        )
+    };
+    let (target, lx, ly) = apply_mouse_capture(*mouse_capture, geometric, wx, wy, content_hole);
     if *focus_target != target {
         // Hand the render-widget focus to the newly targeted OSR browser. These
         // are two independent browsers, so the old one must be blurred or both
@@ -2070,7 +3238,11 @@ async fn forward_key(
             // Key events never arrive (starved LL + old pump skip), held[] has
             // no CONTROL_DOWN — sample the OS as a last resort and synthesize
             // the accelerator key so Ctrl+A still selects-all in CEF.
-            if (0x01..=0x1A).contains(&code) && code != 0x08 && code != 0x09 && code != 0x0A && code != 0x0D
+            if (0x01..=0x1A).contains(&code)
+                && code != 0x08
+                && code != 0x09
+                && code != 0x0A
+                && code != 0x0D
             {
                 let ctrl = keys.ctrl() || key_is_down(VK_CONTROL.0);
                 if ctrl {
@@ -2164,6 +3336,136 @@ async fn forward_key(
 }
 
 #[cfg(test)]
+mod hotkey_tests {
+    use super::{HOTKEY_DEBOUNCE, Hotkey};
+    use glint_overlay_event::input::{Key, KeyInputState, KeyboardInput};
+    use std::thread;
+    use std::time::Duration;
+
+    fn key(vk: u8, down: bool) -> KeyboardInput {
+        KeyboardInput::Key {
+            key: Key::new(vk, false).unwrap(),
+            state: if down {
+                KeyInputState::Pressed
+            } else {
+                KeyInputState::Released
+            },
+        }
+    }
+
+    #[test]
+    fn shift_then_tab_toggles_once() {
+        let mut h = Hotkey::default();
+        assert!(!h.consume(&key(0x10, true)));
+        assert!(h.consume(&key(0x09, true)));
+        assert!(!h.consume(&key(0x09, true)));
+        assert!(!h.consume(&key(0x09, false)));
+    }
+
+    #[test]
+    fn right_shift_extended_still_toggles() {
+        let mut h = Hotkey::default();
+        let shift = KeyboardInput::Key {
+            key: Key::new(0x10, true).unwrap(),
+            state: KeyInputState::Pressed,
+        };
+        assert!(!h.consume(&shift));
+        assert!(h.consume(&key(0x09, true)));
+    }
+
+    #[test]
+    fn left_shift_vk_toggles() {
+        let mut h = Hotkey::default();
+        assert!(!h.consume(&key(0xA0, true)));
+        assert!(h.consume(&key(0x09, true)));
+    }
+
+    #[test]
+    fn right_shift_vk_toggles() {
+        let mut h = Hotkey::default();
+        assert!(!h.consume(&key(0xA1, true)));
+        assert!(h.consume(&key(0x09, true)));
+    }
+
+    #[test]
+    fn tab_repeat_does_not_close_after_debounce() {
+        let mut h = Hotkey::default();
+        assert!(!h.consume(&key(0x10, true)));
+        assert!(h.consume(&key(0x09, true)));
+        thread::sleep(HOTKEY_DEBOUNCE + Duration::from_millis(50));
+        assert!(
+            !h.consume(&key(0x09, true)),
+            "held Tab auto-repeat must not toggle again"
+        );
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_tests {
+    use super::{HEARTBEAT_INTERVAL, OVERLAY_HOTKEY, heartbeat_should_publish};
+    use glint_overlay_common::request::HotkeyChord;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn first_publish_is_due() {
+        let now = Instant::now();
+        assert!(heartbeat_should_publish(None, now, false, OVERLAY_HOTKEY));
+    }
+
+    #[test]
+    fn unchanged_before_interval_is_not_due() {
+        let t0 = Instant::now();
+        let last = Some((t0, false, OVERLAY_HOTKEY));
+        assert!(!heartbeat_should_publish(
+            last,
+            t0 + Duration::from_millis(500),
+            false,
+            OVERLAY_HOTKEY
+        ));
+    }
+
+    #[test]
+    fn interval_elapsed_is_due() {
+        let t0 = Instant::now();
+        let last = Some((t0, true, OVERLAY_HOTKEY));
+        assert!(heartbeat_should_publish(
+            last,
+            t0 + HEARTBEAT_INTERVAL,
+            true,
+            OVERLAY_HOTKEY
+        ));
+    }
+
+    #[test]
+    fn visibility_change_is_due() {
+        let t0 = Instant::now();
+        let last = Some((t0, false, OVERLAY_HOTKEY));
+        assert!(heartbeat_should_publish(
+            last,
+            t0 + Duration::from_millis(10),
+            true,
+            OVERLAY_HOTKEY
+        ));
+    }
+
+    #[test]
+    fn hotkey_change_is_due() {
+        let t0 = Instant::now();
+        let last = Some((t0, true, OVERLAY_HOTKEY));
+        let other = HotkeyChord {
+            vk: 0x1B,
+            modifiers: 0,
+        };
+        assert!(heartbeat_should_publish(
+            last,
+            t0 + Duration::from_millis(10),
+            true,
+            other
+        ));
+    }
+}
+
+#[cfg(test)]
 mod parse_blocking_cursor_tests {
     use super::{cursor_from_name, parse_blocking_cursor};
     use glint_overlay_common::cursor::Cursor;
@@ -2188,10 +3490,7 @@ mod parse_blocking_cursor_tests {
             parse_blocking_cursor(Some(&json!(2))),
             Some(Cursor::Pointer)
         );
-        assert_eq!(
-            parse_blocking_cursor(Some(&json!(13))),
-            Some(Cursor::Grab)
-        );
+        assert_eq!(parse_blocking_cursor(Some(&json!(13))), Some(Cursor::Grab));
         assert_eq!(parse_blocking_cursor(Some(&json!(999))), None);
     }
 
@@ -2219,15 +3518,274 @@ mod parse_blocking_cursor_tests {
 }
 
 #[cfg(test)]
+mod content_paint_tests {
+    use super::content_draw_pos;
+
+    #[test]
+    fn content_dest_prefers_hole_even_when_paint_fills_browser() {
+        let hole = Some((120, 80, 640, 400));
+        // Previously returned (0,0) when paint >= browser — wrong for shell hole.
+        assert_eq!(
+            content_draw_pos(1920, 1080, 1920, 1080, hole, Some(48)),
+            (120.0, 80.0)
+        );
+    }
+
+    #[test]
+    fn content_dest_falls_back_to_chrome_top_without_hole() {
+        assert_eq!(
+            content_draw_pos(800, 500, 900, 700, None, Some(48)),
+            (0.0, 48.0)
+        );
+    }
+
+    #[test]
+    fn content_dest_origin_when_full_size_no_hole() {
+        assert_eq!(
+            content_draw_pos(900, 700, 900, 700, None, Some(48)),
+            (0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn hole_translate_same_size_is_dest_only() {
+        let prev = (40, 80, 800, 600);
+        let next = (120, 100, 800, 600);
+        assert_eq!(prev.2, next.2);
+        assert_eq!(prev.3, next.3);
+        assert_ne!((prev.0, prev.1), (next.0, next.1));
+    }
+}
+
+#[cfg(test)]
+mod browser_session_tests {
+    use super::{
+        OsrTopology, apply_nav_state_blank, browser_session_accepts_content_rect,
+        browser_session_mark_close, browser_session_mark_open, content_surface_layer,
+        expects_content_cef_layer, expects_shell_cef_layer0,
+    };
+
+    #[test]
+    fn set_content_rect_ignored_when_session_closed() {
+        assert!(!browser_session_accepts_content_rect(false));
+        assert!(browser_session_accepts_content_rect(true));
+    }
+
+    #[test]
+    fn open_close_are_idempotent() {
+        let mut open = false;
+        let mut hole = Some((10, 20, 300, 200));
+        let mut blank = false;
+
+        assert!(browser_session_mark_open(&mut open));
+        assert!(open);
+        assert!(!browser_session_mark_open(&mut open));
+
+        assert!(browser_session_mark_close(&mut open, &mut hole, &mut blank));
+        assert!(!open);
+        assert!(hole.is_none());
+        assert!(blank);
+        assert!(!browser_session_mark_close(&mut open, &mut hole, &mut blank));
+    }
+
+    #[test]
+    fn stale_blank_nav_ignored_with_live_hole() {
+        let mut blank = false;
+        apply_nav_state_blank(true, Some((0, 0, 100, 100)), "about:blank", &mut blank);
+        assert!(!blank, "stale close blank must not blank a live hole");
+
+        apply_nav_state_blank(true, None, "about:blank", &mut blank);
+        assert!(blank, "intentional blank (no hole) still applies");
+
+        blank = false;
+        apply_nav_state_blank(false, Some((0, 0, 100, 100)), "about:blank", &mut blank);
+        assert!(blank, "closed session still accepts blank navState");
+    }
+
+    #[test]
+    fn open_navigate_close_reopen_cycle() {
+        let mut open = false;
+        let mut hole = Some((40, 80, 800, 600));
+        let mut blank = false;
+
+        // open → hole published → navigate (non-blank)
+        assert!(browser_session_mark_open(&mut open));
+        apply_nav_state_blank(open, hole, "https://example.com/", &mut blank);
+        assert!(!blank);
+
+        // close clears content bookkeeping only
+        assert!(browser_session_mark_close(&mut open, &mut hole, &mut blank));
+        assert!(blank && hole.is_none() && !open);
+
+        // reopen accepts a new hole + navigate without needing CEF restart
+        assert!(browser_session_mark_open(&mut open));
+        hole = Some((40, 80, 800, 600));
+        blank = false;
+        // late about:blank from prior close must not stick once hole is back
+        apply_nav_state_blank(open, hole, "about:blank", &mut blank);
+        assert!(!blank);
+        apply_nav_state_blank(open, hole, "https://example.com/reopen", &mut blank);
+        assert!(!blank);
+    }
+
+    /// Opt-in ShellOnly helpers (GLINT_CEF_SHELL_ONLY): iframe page, no content twin.
+    #[test]
+    fn shell_only_iframe_topology_helpers() {
+        let topology = OsrTopology::ShellOnly;
+        assert!(expects_shell_cef_layer0(topology));
+        assert!(!expects_content_cef_layer(topology));
+        assert!(expects_shell_cef_layer0(OsrTopology::ShellHostAndContent));
+        assert!(expects_content_cef_layer(OsrTopology::ShellHostAndContent));
+        assert!(!expects_shell_cef_layer0(OsrTopology::ContentOnly));
+        assert!(expects_content_cef_layer(OsrTopology::ContentOnly));
+
+        let mut open = false;
+        let mut hole = None;
+        let mut blank = true;
+
+        assert!(browser_session_mark_open(&mut open));
+        apply_nav_state_blank(open, hole, "https://example.com/", &mut blank);
+        assert!(!blank);
+
+        assert!(browser_session_mark_close(&mut open, &mut hole, &mut blank));
+        assert!(blank && hole.is_none() && !open);
+
+        assert!(browser_session_mark_open(&mut open));
+        apply_nav_state_blank(open, hole, "https://example.com/reopen", &mut blank);
+        assert!(!blank);
+    }
+
+    /// Product-default dual OSR: shell atlas + content hole surface.
+    #[test]
+    fn dual_osr_product_default_expects_shell_and_content() {
+        let topology = OsrTopology::ShellHostAndContent;
+        assert!(expects_shell_cef_layer0(topology));
+        assert!(expects_content_cef_layer(topology));
+        assert_eq!(content_surface_layer(0), 1);
+        assert_eq!(content_surface_layer(1), 1);
+    }
+
+    /// Legacy content-only spike topology helpers (env rollback path).
+    #[test]
+    fn single_osr_open_navigate_close_on_content_surface() {
+        let topology = OsrTopology::ContentOnly;
+        assert!(!expects_shell_cef_layer0(topology));
+        assert!(expects_content_cef_layer(topology));
+        assert_eq!(content_surface_layer(0), 1);
+        assert_eq!(content_surface_layer(1), 1);
+        assert_eq!(content_surface_layer(2), 2);
+
+        let mut open = false;
+        let mut hole = Some((40, 80, 800, 600));
+        let mut blank = false;
+        let mut content_layer = content_surface_layer(1);
+
+        assert!(browser_session_mark_open(&mut open));
+        apply_nav_state_blank(open, hole, "https://example.com/", &mut blank);
+        assert!(!blank);
+        assert_eq!(content_layer, 1);
+
+        assert!(browser_session_mark_close(&mut open, &mut hole, &mut blank));
+        assert!(blank && hole.is_none() && !open);
+
+        assert!(browser_session_mark_open(&mut open));
+        hole = Some((40, 80, 800, 600));
+        content_layer = content_surface_layer(1);
+        apply_nav_state_blank(open, hole, "https://example.com/reopen", &mut blank);
+        assert!(!blank);
+        assert_eq!(content_layer, 1);
+        assert!(!expects_shell_cef_layer0(topology));
+    }
+}
+
+#[cfg(test)]
 mod mouse_capture_tests {
-    use super::{apply_mouse_capture, resolve_cursor_target, CefFocusTarget};
+    use super::{
+        CefFocusTarget, OsrTopology, apply_mouse_capture, blur_grants_chrome, resolve_cursor_target,
+    };
 
     #[test]
     fn hole_hit_without_capture_goes_to_content() {
         let hole = Some((100, 100, 400, 300));
-        let (t, lx, ly) = resolve_cursor_target(150, 200, 150, 200, false, hole, None);
+        let (t, lx, ly) = resolve_cursor_target(
+            150,
+            200,
+            150,
+            200,
+            false,
+            hole,
+            None,
+            OsrTopology::ShellHostAndContent,
+        );
         assert_eq!(t, CefFocusTarget::Content);
         assert_eq!((lx, ly), (50, 100));
+    }
+
+    #[test]
+    fn toolbar_above_hole_goes_to_chrome() {
+        let hole = Some((100, 120, 400, 300));
+        let (t, lx, ly) = resolve_cursor_target(
+            150,
+            80,
+            150,
+            80,
+            false,
+            hole,
+            None,
+            OsrTopology::ShellHostAndContent,
+        );
+        assert_eq!(t, CefFocusTarget::Chrome);
+        assert_eq!((lx, ly), (150, 80));
+    }
+
+    #[test]
+    fn beside_hole_goes_to_chrome() {
+        let hole = Some((100, 100, 400, 300));
+        let (t, ..) = resolve_cursor_target(
+            50,
+            200,
+            50,
+            200,
+            false,
+            hole,
+            None,
+            OsrTopology::ShellHostAndContent,
+        );
+        assert_eq!(t, CefFocusTarget::Chrome);
+    }
+
+    #[test]
+    fn no_hole_routes_chrome() {
+        let (t, ..) = resolve_cursor_target(
+            150,
+            200,
+            150,
+            200,
+            true,
+            None,
+            Some(80),
+            OsrTopology::ShellHostAndContent,
+        );
+        assert_eq!(t, CefFocusTarget::Chrome);
+    }
+
+    /// ShellOnly + iframe: no content hole; after navigate `content_blank` is false.
+    /// Legacy chrome_top→Content strip must NOT fire (would SendMouse to chrome_
+    /// with Y -= kChromeTopPx ≈ 130 → hit rides high above the visual cursor).
+    #[test]
+    fn shell_only_no_hole_always_chrome_surface_coords() {
+        let (t, lx, ly) = resolve_cursor_target(
+            400,
+            500,
+            50,
+            200,
+            false,
+            None,
+            Some(130),
+            OsrTopology::ShellOnly,
+        );
+        assert_eq!(t, CefFocusTarget::Chrome);
+        assert_eq!((lx, ly), (400, 500));
     }
 
     #[test]
@@ -2235,7 +3793,16 @@ mod mouse_capture_tests {
         // Shift+Tab hide sets content_blank via setContentRect(null); if restore
         // only brings the rect back and leaves blank=true, clicks miss Content.
         let hole = Some((100, 100, 400, 300));
-        let (t, lx, ly) = resolve_cursor_target(150, 200, 150, 200, true, hole, None);
+        let (t, lx, ly) = resolve_cursor_target(
+            150,
+            200,
+            150,
+            200,
+            true,
+            hole,
+            None,
+            OsrTopology::ShellHostAndContent,
+        );
         assert_eq!(t, CefFocusTarget::Chrome);
         assert_eq!((lx, ly), (150, 200));
     }
@@ -2243,11 +3810,310 @@ mod mouse_capture_tests {
     #[test]
     fn chrome_capture_keeps_chrome_over_hole() {
         let hole = Some((100, 100, 400, 300));
-        let geometric = resolve_cursor_target(150, 200, 150, 200, false, hole, None);
+        let geometric = resolve_cursor_target(
+            150,
+            200,
+            150,
+            200,
+            false,
+            hole,
+            None,
+            OsrTopology::ShellHostAndContent,
+        );
         assert_eq!(geometric.0, CefFocusTarget::Content);
         let (t, lx, ly) =
             apply_mouse_capture(Some(CefFocusTarget::Chrome), geometric, 150, 200, hole);
         assert_eq!(t, CefFocusTarget::Chrome);
         assert_eq!((lx, ly), (150, 200));
+    }
+
+    #[test]
+    fn blur_from_content_grants_chrome() {
+        let mut t = CefFocusTarget::Content;
+        assert_eq!(blur_grants_chrome(&mut t), Some(CefFocusTarget::Content));
+        assert_eq!(t, CefFocusTarget::Chrome);
+        assert_eq!(blur_grants_chrome(&mut t), None);
+    }
+}
+
+#[cfg(test)]
+mod chrome_dest_move_tests {
+    use super::{
+        PositionOp, SetPositionArgs, chrome_dest_publish, chrome_sync_cmds, clamp_crop_rect,
+        hole_owned_by_window, parse_set_position, position_op, promo_layer_id, translate_rect,
+        visual_window_crop,
+    };
+
+    #[test]
+    fn shell_publish_is_layer_0_no_dest() {
+        let (layer, dest) = chrome_dest_publish(true, 1, 40.0, 80.0);
+        assert_eq!((layer, dest), (0, None));
+        assert_eq!(chrome_sync_cmds(layer, true), (false, false, false));
+    }
+
+    #[test]
+    fn floating_publish_is_dest_capable_not_layer_0() {
+        let overlay_layer = 1u32;
+        let (layer, dest) = chrome_dest_publish(false, overlay_layer, 40.0, 80.0);
+        assert_eq!(layer, overlay_layer.max(1));
+        assert_eq!(dest, Some((40.0, 80.0)));
+        assert_ne!(layer, 0);
+        assert_eq!(chrome_dest_publish(false, 0, 40.0, 80.0).0, 1);
+        assert_eq!(chrome_sync_cmds(layer, true), (false, true, true));
+    }
+
+    #[test]
+    fn dest_only_layer_ge_1_skips_set_bounds() {
+        let (set_bounds, send_dest, input_rect) = chrome_sync_cmds(1, true);
+        assert!(!set_bounds);
+        assert!(send_dest);
+        assert!(input_rect);
+    }
+
+    #[test]
+    fn dest_only_promo_layer_2_skips_set_bounds() {
+        let (set_bounds, send_dest, input_rect) = chrome_sync_cmds(2, true);
+        assert!(!set_bounds);
+        assert!(send_dest);
+        assert!(input_rect);
+    }
+
+    #[test]
+    fn dest_only_layer_0_sends_no_dest_cmds() {
+        let (set_bounds, send_dest, input_rect) = chrome_sync_cmds(0, true);
+        assert!(!set_bounds);
+        assert!(!send_dest, "no SetLayerPosition / opcode 29 on layer 0");
+        assert!(!input_rect, "no SetLayerInputRect on layer 0");
+    }
+
+    #[test]
+    fn parse_set_position_origin_only() {
+        assert_eq!(
+            parse_set_position("[40,80]").unwrap(),
+            SetPositionArgs::Dest { x: 40.0, y: 80.0 }
+        );
+    }
+
+    #[test]
+    fn parse_set_position_origin_and_size() {
+        assert_eq!(
+            parse_set_position("[10,20,400,300]").unwrap(),
+            SetPositionArgs::Size {
+                x: 10.0,
+                y: 20.0,
+                w: 400,
+                h: 300
+            }
+        );
+    }
+
+    #[test]
+    fn parse_set_position_empty_ends_promo() {
+        assert_eq!(parse_set_position("[]").unwrap(), SetPositionArgs::End);
+        assert_eq!(parse_set_position("null").unwrap(), SetPositionArgs::End);
+        assert_eq!(parse_set_position("").unwrap(), SetPositionArgs::End);
+    }
+
+    #[test]
+    fn promo_layer_never_zero_or_content() {
+        assert_eq!(promo_layer_id(0), 2);
+        assert_eq!(promo_layer_id(1), 2);
+        assert_eq!(promo_layer_id(2), 3);
+        assert!(promo_layer_id(1) != 0 && promo_layer_id(1) != 1);
+    }
+
+    #[test]
+    fn shell_set_position_no_promo_xy_is_ack() {
+        let op = position_op(
+            true,
+            1,
+            None,
+            SetPositionArgs::Dest { x: 400.0, y: 200.0 },
+            (1920, 1080),
+        );
+        assert_eq!(op, PositionOp::Ack);
+    }
+
+    #[test]
+    fn shell_set_position_size_promotes_layer_2() {
+        let op = position_op(
+            true,
+            1,
+            None,
+            SetPositionArgs::Size {
+                x: 80.0,
+                y: 40.0,
+                w: 640,
+                h: 480,
+            },
+            (1920, 1080),
+        );
+        assert_eq!(
+            op,
+            PositionOp::Promote {
+                layer: 2,
+                x: 80.0,
+                y: 40.0,
+                w: 640,
+                h: 480
+            }
+        );
+    }
+
+    #[test]
+    fn shell_set_position_xy_while_promo_dests_promo() {
+        let op = position_op(
+            true,
+            1,
+            Some((2, 640, 480)),
+            SetPositionArgs::Dest { x: 120.0, y: 60.0 },
+            (1920, 1080),
+        );
+        assert_eq!(
+            op,
+            PositionOp::DestPromo {
+                layer: 2,
+                x: 120.0,
+                y: 60.0,
+                w: 640,
+                h: 480
+            }
+        );
+    }
+
+    #[test]
+    fn shell_set_position_size_while_promo_ends() {
+        let op = position_op(
+            true,
+            1,
+            Some((2, 640, 480)),
+            SetPositionArgs::Size {
+                x: 120.0,
+                y: 60.0,
+                w: 640,
+                h: 480,
+            },
+            (1920, 1080),
+        );
+        assert_eq!(op, PositionOp::EndPromo);
+    }
+
+    #[test]
+    fn floating_set_position_writes_origin_and_dests() {
+        let op = position_op(
+            false,
+            0,
+            None,
+            SetPositionArgs::Size {
+                x: 40.0,
+                y: 80.0,
+                w: 400,
+                h: 300,
+            },
+            (400, 300),
+        );
+        assert_eq!(
+            op,
+            PositionOp::Floating {
+                layer: 1,
+                x: 40.0,
+                y: 80.0,
+                w: 400,
+                h: 300,
+                dest_only: true
+            }
+        );
+    }
+
+    #[test]
+    fn hole_inside_window_is_owned() {
+        assert!(hole_owned_by_window(
+            (100, 80, 640, 360),
+            80.0,
+            40.0,
+            800,
+            500
+        ));
+        assert!(!hole_owned_by_window(
+            (100, 80, 640, 360),
+            400.0,
+            200.0,
+            200,
+            150
+        ));
+    }
+
+    #[test]
+    fn hole_follows_origin_delta() {
+        let (x, y, w, h) = translate_rect((100, 80, 640, 360), (80.0, 40.0), (120.0, 70.0));
+        assert_eq!((x, y, w, h), (140.0, 110.0, 640, 360));
+    }
+
+    #[test]
+    fn crop_rect_stays_inside_atlas() {
+        let r = clamp_crop_rect(1800.0, 20.0, 400, 300, 1920, 1080).unwrap();
+        assert_eq!(r.x, 1800);
+        assert_eq!(r.width, 120);
+        assert_eq!(r.height, 300);
+    }
+
+    #[test]
+    fn visual_crop_is_exact_window_rect() {
+        let (src, pad) = visual_window_crop(80.0, 40.0, 640, 480, 1920, 1080).unwrap();
+        assert_eq!(pad, (0.0, 0.0));
+        assert_eq!((src.x, src.y, src.width, src.height), (80, 40, 640, 480));
+    }
+
+    #[test]
+    fn park_always_clears_promo_layer() {
+        let overlay_layer = 1u32;
+        let promo = Some(2u32);
+        let layer = promo.unwrap_or_else(|| promo_layer_id(overlay_layer));
+        assert_eq!(layer, 2);
+        assert_ne!(layer, 0);
+        assert_ne!(layer, 1);
+    }
+}
+
+#[cfg(test)]
+mod connection_json_tests {
+    use super::{connection_json, parse_session_snapshot};
+
+    const SNAPSHOT: &str = r#"{"games":[
+        {"pid":1234,"name":"Hollow Knight","totalSeconds":45060},
+        {"pid":555,"name":"Other","totalSeconds":10}
+    ]}"#;
+
+    #[test]
+    fn matched_pid_carries_name_and_seconds() {
+        let info = parse_session_snapshot(SNAPSHOT, 1234);
+        assert_eq!(info, Some(("Hollow Knight".to_string(), 45060)));
+        let value: serde_json::Value =
+            serde_json::from_str(&connection_json(1234, info.as_ref(), None)).unwrap();
+        assert_eq!(value["type"], "connection");
+        assert_eq!(value["connected"], true);
+        assert_eq!(value["pid"], 1234);
+        assert_eq!(value["gameName"], "Hollow Knight");
+        assert_eq!(value["playtimeSeconds"], 45060);
+    }
+
+    #[test]
+    fn unmatched_or_broken_snapshot_omits_fields() {
+        for raw in [
+            SNAPSHOT,
+            r#"{"games":[{"pid":999,"name":"X","totalSeconds":1}]}"#,
+            r#"{"games":"nope"}"#,
+            "not json",
+            "",
+        ] {
+            assert_eq!(
+                parse_session_snapshot(raw, 1234),
+                if raw == SNAPSHOT { Some(("Hollow Knight".into(), 45060)) } else { None }
+            );
+            let value: serde_json::Value =
+                serde_json::from_str(&connection_json(1234, None, None)).unwrap();
+            assert!(value.get("gameName").is_none());
+            assert!(value.get("playtimeSeconds").is_none());
+        }
     }
 }

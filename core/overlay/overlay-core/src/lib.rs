@@ -29,14 +29,24 @@ pub mod event_sink;
 pub mod layout;
 pub mod surface;
 
+mod capture;
+mod cef_frame;
+mod compositor;
+mod coop;
 mod hook;
 mod interop;
+mod paint_cmd;
 mod renderer;
 mod resources;
 mod texture;
 mod types;
 
+pub use capture::ingest_captured_frame;
+pub use coop::{b_overlay_needs_present, is_overlay_enabled, overlay_is_using_input};
+pub use hook::{create_process_w_original, set_child_inject};
+pub use paint_cmd::{InterpretResult, PaintAction, PaintInterpreter, SharedTexBusy};
 pub use types::IntDashMap;
+pub use util::{MailboxSample, after_original_present, mailbox_sample, with_keyed_mutex_sampled};
 mod util;
 
 use anyhow::{Context, bail};

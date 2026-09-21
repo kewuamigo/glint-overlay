@@ -69,8 +69,8 @@ impl FrameGenState {
     }
 
     pub fn native_with_frame_gen(&mut self, display: f64, present: f64) -> f64 {
-        let plausible = present >= MIN_PRESENT_FOR_FRAMEGEN
-            && present < display / FRAMEGEN_DISPLAY_MARGIN;
+        let plausible =
+            present >= MIN_PRESENT_FOR_FRAMEGEN && present < display / FRAMEGEN_DISPLAY_MARGIN;
 
         if plausible {
             self.last_fg_native = present;

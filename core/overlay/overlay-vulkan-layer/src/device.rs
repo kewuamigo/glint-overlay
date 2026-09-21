@@ -115,6 +115,8 @@ pub(super) extern "system" fn get_proc_addr(
             "vkCreateSwapchainKHR" => swapchain::create_swapchain: vk::PFN_vkCreateSwapchainKHR,
             "vkDestroySwapchainKHR" => swapchain::destroy_swapchain: vk::PFN_vkDestroySwapchainKHR,
             "vkQueuePresentKHR" => queue::present: vk::PFN_vkQueuePresentKHR,
+            "vkAcquireNextImageKHR" => queue::acquire_next_image: vk::PFN_vkAcquireNextImageKHR,
+            "vkAcquireNextImage2KHR" => queue::acquire_next_image2: vk::PFN_vkAcquireNextImage2KHR,
         });
     }
 

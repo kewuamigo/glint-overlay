@@ -4,13 +4,13 @@ use core::{ffi::c_void, mem};
 use std::ffi::CString;
 
 use anyhow::Context;
-use glint_overlay_hook::DetourHook;
 use dashmap::Entry;
+use glint_overlay_hook::DetourHook;
 use once_cell::sync::{Lazy, OnceCell};
 use tracing::{debug, error, trace};
 use windows::{
     Win32::{
-        Foundation::{HMODULE, HWND, LUID},
+        Foundation::{HMODULE, LUID},
         Graphics::{
             Dxgi::{CreateDXGIFactory1, IDXGIFactory1},
             Gdi::{HDC, WindowFromDC},
@@ -30,13 +30,14 @@ use crate::{
     hook::opengl::data::with_renderer_gl_data,
     renderer::opengl::OpenglRenderer,
     types::IntDashMap,
-    util::find_adapter_by_luid,
+    util::{after_original_present, find_adapter_by_luid},
     wgl,
 };
 
 struct Hook {
     wgl_delete_context: DetourHook<WglDeleteContextFn>,
     wgl_swap_buffers: DetourHook<WglSwapBuffersFn>,
+    wgl_swap_layer_buffers: DetourHook<WglSwapLayerBuffersFn>,
 }
 
 static HOOK: OnceCell<Hook> = OnceCell::new();
@@ -50,7 +51,7 @@ struct GlData {
 static MAP: Lazy<IntDashMap<u32, GlData>> = Lazy::new(IntDashMap::default);
 
 #[tracing::instrument]
-pub fn hook(dummy_hwnd: HWND) {
+pub fn hook() {
     fn inner() -> anyhow::Result<()> {
         let addrs = get_wgl_addrs().context("failed to load opengl addrs")?;
 
@@ -63,9 +64,14 @@ pub fn hook(dummy_hwnd: HWND) {
             let wgl_swap_buffers =
                 DetourHook::attach(addrs.swap_buffers, hooked_wgl_swap_buffers as _)?;
 
+            debug!("hooking WglSwapLayerBuffers");
+            let wgl_swap_layer_buffers =
+                DetourHook::attach(addrs.swap_layer_buffers, hooked_wgl_swap_layer_buffers as _)?;
+
             Ok::<_, anyhow::Error>(Hook {
                 wgl_delete_context,
                 wgl_swap_buffers,
+                wgl_swap_layer_buffers,
             })
         })?;
 
@@ -113,6 +119,9 @@ extern "system" fn hooked_wgl_delete_context(hglrc: HGLRC) -> BOOL {
 fn draw_overlay(hdc: HDC) {
     #[inline]
     fn inner(backend: &WindowBackend, renderer: &mut Option<OpenglRenderer>) {
+        if backend.independent_active() {
+            return;
+        }
         let mut render = backend.render.lock();
         match render.renderer {
             Some(Renderer::Opengl) => {}
@@ -159,7 +168,8 @@ fn draw_overlay(hdc: HDC) {
                 return;
             }
 
-            let _res = renderer.draw(position, size, screen);
+            let mutex = render.surface.get().and_then(|s| s.mutex());
+            let _res = renderer.draw(position, size, screen, mutex);
             trace!("opengl render: {:?}", _res);
         })
     }
@@ -229,15 +239,35 @@ extern "system" fn hooked_wgl_swap_buffers(hdc: HDC) -> BOOL {
 
     draw_overlay(hdc);
 
-    unsafe { HOOK.wait().wgl_swap_buffers.original_fn()(hdc) }
+    after_original_present(|| unsafe { HOOK.wait().wgl_swap_buffers.original_fn()(hdc) })
+}
+
+/// Steam `sub_1800A1FA0`: blit only on WGL_SWAP_MAIN_PLANE.
+const WGL_SWAP_MAIN_PLANE: u32 = 1;
+
+fn should_blit_swap_layer(planes: u32) -> bool {
+    planes == WGL_SWAP_MAIN_PLANE
+}
+
+#[tracing::instrument]
+extern "system" fn hooked_wgl_swap_layer_buffers(hdc: HDC, planes: u32) -> BOOL {
+    trace!("WglSwapLayerBuffers called");
+    if should_blit_swap_layer(planes) {
+        draw_overlay(hdc);
+    }
+    after_original_present(|| unsafe {
+        HOOK.wait().wgl_swap_layer_buffers.original_fn()(hdc, planes)
+    })
 }
 
 type WglSwapBuffersFn = unsafe extern "system" fn(HDC) -> BOOL;
+type WglSwapLayerBuffersFn = unsafe extern "system" fn(HDC, u32) -> BOOL;
 type WglDeleteContextFn = unsafe extern "system" fn(HGLRC) -> BOOL;
 
 struct WglAddrs {
     delete_context: WglDeleteContextFn,
     swap_buffers: WglSwapBuffersFn,
+    swap_layer_buffers: WglSwapLayerBuffersFn,
 }
 
 #[tracing::instrument]
@@ -260,9 +290,19 @@ fn get_wgl_addrs() -> anyhow::Result<WglAddrs> {
     let swap_buffers =
         unsafe { mem::transmute::<unsafe extern "system" fn() -> isize, WglSwapBuffersFn>(func) };
 
+    let func = unsafe {
+        GetProcAddress(opengl32module, s!("wglSwapLayerBuffers"))
+            .context("wglSwapLayerBuffers not found")?
+    };
+    debug!("WglSwapLayerBuffers found: {:p}", func);
+    let swap_layer_buffers = unsafe {
+        mem::transmute::<unsafe extern "system" fn() -> isize, WglSwapLayerBuffersFn>(func)
+    };
+
     Ok(WglAddrs {
         delete_context,
         swap_buffers,
+        swap_layer_buffers,
     })
 }
 
@@ -272,7 +312,9 @@ fn setup_gl() -> anyhow::Result<()> {
 
     #[tracing::instrument]
     fn loader(module: HMODULE, s: &str) -> *const c_void {
-        let name = CString::new(s).unwrap();
+        let Ok(name) = CString::new(s) else {
+            return std::ptr::null();
+        };
 
         let addr = unsafe {
             let addr = PCSTR(name.as_ptr() as _);
@@ -292,4 +334,20 @@ fn setup_gl() -> anyhow::Result<()> {
     gl::load_with(|s| loader(opengl32module, s));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_blit_swap_layer;
+
+    #[test]
+    fn swap_layer_main_plane_blits() {
+        assert!(should_blit_swap_layer(1));
+    }
+
+    #[test]
+    fn swap_layer_other_plane_skips_blit() {
+        assert!(!should_blit_swap_layer(0));
+        assert!(!should_blit_swap_layer(2));
+    }
 }

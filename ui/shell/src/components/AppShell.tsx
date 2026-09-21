@@ -14,6 +14,7 @@ import {
   useOverlayWindows,
   type AppPanelTab,
 } from '../hooks/useOverlayWindows';
+import { useSessionInfo } from '../hooks/useSessionInfo';
 
 function AppFullPanel({
   manifestId,
@@ -59,6 +60,7 @@ function LoadedAppPanel({
 export function AppShell({ suspended = false }: { suspended?: boolean }) {
   const { connected, targetPid } = useOverlay();
   const { manifests } = useAppRuntime();
+  const { clock, session, total, gameName } = useSessionInfo();
 
   const appTabs = useMemo<AppPanelTab[]>(() => {
     const tabs: AppPanelTab[] = [];
@@ -101,15 +103,16 @@ export function AppShell({ suspended = false }: { suspended?: boolean }) {
     if (tab.manifestId === 'browser') {
       const existing = windows.find((w) => w.key === tab.key);
       if (existing && !existing.minimized && focusedKey === tab.key) {
+        // Close UI first — never block on closeSession (stuck CEF left the
+        // window unclosable when openSession never paired).
         closeWindow(tab.key);
-        void hostInvoke('browser.closeSession');
         setFocusedKey(null);
+        void hostInvoke('browser.closeSession');
         return;
       }
-      if (!existing) {
-        void hostInvoke('browser.openSession');
-      }
-      toggleWindow(tab);
+      void hostInvoke('browser.openSession').then(() => {
+        toggleWindow(tab);
+      });
       return;
     }
     toggleWindow(tab);
@@ -117,7 +120,9 @@ export function AppShell({ suspended = false }: { suspended?: boolean }) {
 
   const handleClose = (win: (typeof windows)[number]) => {
     if (win.manifestId === 'browser') {
+      closeWindow(win.key);
       void hostInvoke('browser.closeSession');
+      return;
     }
     closeWindow(win.key);
   };
@@ -140,6 +145,20 @@ export function AppShell({ suspended = false }: { suspended?: boolean }) {
         <span className="overlay-desktop-title">Glint</span>
         <span className="overlay-desktop-status">
           {connected ? `PID ${targetPid}` : 'Disconnected'}
+        </span>
+        <span className="chrome-info">
+          <span className="chrome-chip tabular-nums">{clock}</span>
+          {session && (
+            <span className="chrome-chip tabular-nums">{session}</span>
+          )}
+          {total && (
+            <span
+              className="chrome-chip tabular-nums"
+              title={gameName ?? undefined}
+            >
+              {total}
+            </span>
+          )}
         </span>
         <span className="hotkey-hint">Shift+Tab</span>
       </div>

@@ -92,11 +92,7 @@ mod tests {
     fn strips_bom_on_read() {
         let dir = temp_plugin_dir();
         ensure_data_dir(&dir).unwrap();
-        std::fs::write(
-            store_path(&dir),
-            "\u{FEFF}{\n  \"bom\": true\n}",
-        )
-        .unwrap();
+        std::fs::write(store_path(&dir), "\u{FEFF}{\n  \"bom\": true\n}").unwrap();
         assert_eq!(get(&dir, "bom").unwrap(), Value::Bool(true));
         let _ = std::fs::remove_dir_all(&dir);
     }

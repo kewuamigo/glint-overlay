@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { hostInvoke } from '@glint/overlay-bridge';
 
 export type AchievementToastPayload = {
   gameName: string;
@@ -10,8 +11,10 @@ export type AchievementToastPayload = {
 
 type ToastItem = AchievementToastPayload & { id: number };
 
-const SOUND_URL = '/achievements/XboxAchievement.mp3';
-const SOUND_RARE_URL = '/achievements/XboxOneRareAchievement.mp3';
+// Relative to the shell document (file:// dist). Host also plays these via
+// PlaySound; JS is a fallback when `__goHost` is missing (standalone preview).
+const SOUND_URL = './achievements/XboxAchievement.wav';
+const SOUND_RARE_URL = './achievements/XboxOneRareAchievement.wav';
 const ANIM_MS = 12_000;
 
 export function AchievementToasts() {
@@ -45,10 +48,19 @@ export function AchievementToasts() {
       // Restart CSS animations on the next frame after mount/update.
       requestAnimationFrame(() => {
         setPlaying(true);
-        const a = next.rare ? soundRareRef.current : soundRef.current;
-        if (a) {
-          a.currentTime = 0;
-          void a.play().catch(() => undefined);
+        const playHtml = () => {
+          const a = next.rare ? soundRareRef.current : soundRef.current;
+          if (a) {
+            a.currentTime = 0;
+            void a.play().catch(() => undefined);
+          }
+        };
+        if (window.__goHost) {
+          void hostInvoke('ui.playAchievementSound', [Boolean(next.rare)]).catch(
+            playHtml,
+          );
+        } else {
+          playHtml();
         }
       });
       timer = window.setTimeout(() => {

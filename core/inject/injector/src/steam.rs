@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::config::{AppConfig, GameEntry};
-use crate::process::{find_pid_by_name, list_all_processes, ProcessEntry};
+use crate::process::{ProcessEntry, find_pid_by_name, list_all_processes};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScannedGame {
@@ -35,13 +35,20 @@ pub fn scan_games(config_path: Option<&Path>) -> Result<Vec<ScannedGame>> {
     };
     merge_config_games(&mut games, &config.games);
     attach_running_state(&mut games);
-    games.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    games.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+    });
     Ok(games)
 }
 
 fn merge_config_games(games: &mut Vec<ScannedGame>, entries: &[GameEntry]) {
     for entry in entries {
-        if games.iter().any(|g| g.exe.eq_ignore_ascii_case(&entry.executable)) {
+        if games
+            .iter()
+            .any(|g| g.exe.eq_ignore_ascii_case(&entry.executable))
+        {
             continue;
         }
         games.push(ScannedGame {
@@ -63,7 +70,10 @@ fn attach_running_state(games: &mut [ScannedGame]) {
         game.running = false;
         game.pid = None;
         let exe_lower = game.exe.to_ascii_lowercase();
-        if let Some(proc) = processes.iter().find(|p| p.name.eq_ignore_ascii_case(&game.exe)) {
+        if let Some(proc) = processes
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&game.exe))
+        {
             game.running = true;
             game.pid = Some(proc.pid);
             continue;
@@ -89,11 +99,7 @@ fn find_pid_in_install_dir(processes: &[ProcessEntry], install_path: &Path) -> O
         .iter()
         .find(|p| {
             p.name.ends_with(".exe")
-                && install.contains(
-                    &p.name
-                        .trim_end_matches(".exe")
-                        .to_ascii_lowercase(),
-                )
+                && install.contains(&p.name.trim_end_matches(".exe").to_ascii_lowercase())
         })
         .map(|p| p.pid)
         .or_else(|| {
@@ -140,8 +146,8 @@ fn steam_library_paths() -> Result<Vec<PathBuf>> {
     }
     let vdf = default_steam.join("steamapps").join("libraryfolders.vdf");
     if vdf.is_file() {
-        let text = std::fs::read_to_string(&vdf)
-            .with_context(|| format!("read {}", vdf.display()))?;
+        let text =
+            std::fs::read_to_string(&vdf).with_context(|| format!("read {}", vdf.display()))?;
         for path in parse_vdf_paths(&text) {
             if path.is_dir() {
                 paths.push(path);

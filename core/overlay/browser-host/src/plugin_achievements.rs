@@ -6,7 +6,7 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -24,6 +24,7 @@ pub struct UnlockToast {
 }
 
 static TOAST_TX: OnceLock<UnboundedSender<UnlockToast>> = OnceLock::new();
+static LAST_TOAST_SOUND: Mutex<Option<Instant>> = Mutex::new(None);
 
 static WATCH: Mutex<Option<WatchState>> = Mutex::new(None);
 
@@ -56,6 +57,68 @@ fn emit_unlock(game_name: &str, title: &str, icon_url: Option<&str>) {
             icon_url: icon_url.map(|s| s.to_string()),
         });
     }
+}
+
+/// WAV next to the shell dist (`PlaySound` cannot decode MP3).
+fn toast_sound_path(rare: bool) -> Option<PathBuf> {
+    let name = if rare {
+        "XboxOneRareAchievement.wav"
+    } else {
+        "XboxAchievement.wav"
+    };
+    let mut candidates = Vec::new();
+    if let Some(ui) = std::env::var_os("GLINT_UI_URL") {
+        let mut dir = PathBuf::from(ui);
+        if dir.is_file() {
+            dir.pop();
+        }
+        candidates.push(dir.join("achievements").join(name));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("ui/shell/dist/achievements").join(name));
+            candidates.push(dir.join("achievements").join(name));
+        }
+    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    candidates.push(
+        manifest
+            .join("../../../ui/shell/public/achievements")
+            .join(name),
+    );
+    candidates.push(
+        manifest
+            .join("../../../ui/shell/dist/achievements")
+            .join(name),
+    );
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// CEF HTML5 audio is blocked without a user gesture (and HudPinned has none),
+/// so unlocks play through winmm instead of `Audio.play()`.
+pub(crate) fn play_toast_sound(rare: bool) {
+    if let Ok(mut last) = LAST_TOAST_SOUND.lock() {
+        let now = Instant::now();
+        if last.is_some_and(|t| now.duration_since(t) < Duration::from_millis(400)) {
+            return;
+        }
+        *last = Some(now);
+    }
+    let Some(path) = toast_sound_path(rare) else {
+        tracing::warn!("achievement toast wav not found");
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name("ach-toast-snd".into())
+        .spawn(move || {
+            use windows::Win32::Media::Audio::{
+                PlaySoundW, SND_FILENAME, SND_NODEFAULT, SND_SYNC,
+            };
+            let sound = windows::core::HSTRING::from(path.as_os_str());
+            unsafe {
+                let _ = PlaySoundW(&sound, None, SND_FILENAME | SND_NODEFAULT | SND_SYNC);
+            }
+        });
 }
 
 fn achievements_dir() -> PathBuf {
@@ -205,7 +268,14 @@ fn record_unlock(
     icon_unlocked: Option<&str>,
     unlocked_at: Option<i64>,
 ) -> Result<bool, String> {
-    upsert_def(conn, game_id, achievement_id, title, description, icon_unlocked)?;
+    upsert_def(
+        conn,
+        game_id,
+        achievement_id,
+        title,
+        description,
+        icon_unlocked,
+    )?;
     let prev: Option<i64> = conn
         .query_row(
             "SELECT unlocked FROM achievement_state
@@ -371,8 +441,7 @@ fn guide(kind: &str) -> Value {
 }
 
 fn detect_eos_vendor(game_dir: &Path, names_lower: &HashSet<String>) -> &'static str {
-    if names_lower.contains("nemirtingasepicemu.json")
-        || game_dir.join("nepice_settings").exists()
+    if names_lower.contains("nemirtingasepicemu.json") || game_dir.join("nepice_settings").exists()
     {
         return "nemirtingas";
     }
@@ -500,19 +569,15 @@ fn track_exe(exe_path: &str) -> Result<Value, String> {
         )
     };
     let conn = open_db()?;
-    upsert_tracked_game(
-        &conn,
-        &id,
-        name,
-        plat,
-        source,
-        Some(exe_path),
-        Some(base),
-    )?;
+    upsert_tracked_game(&conn, &id, name, plat, source, Some(exe_path), Some(base))?;
     Ok(detect)
 }
 
-fn find_game_for_process(conn: &Connection, exe_path: &str, exe_name: &str) -> Result<Value, String> {
+fn find_game_for_process(
+    conn: &Connection,
+    exe_path: &str,
+    exe_name: &str,
+) -> Result<Value, String> {
     let Value::Array(arr) = list_games(conn)? else {
         return Ok(Value::Null);
     };
@@ -571,8 +636,8 @@ fn resolve_exe_for_toast() -> (String, String) {
     // Same QueryFullProcessImageNameW path as F004 (local copy — avoid ipc cycle).
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-        PROCESS_QUERY_LIMITED_INFORMATION,
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
     };
     use windows::core::PWSTR;
     unsafe {
@@ -742,6 +807,32 @@ fn should_scan(path: &Path, state: &mut WatchState) -> bool {
     true
 }
 
+fn resolve_gse_unlock_target(conn: &Connection, app_id: &str) -> (String, String) {
+    let mapped: Option<String> = conn
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = 'library_by_appid:' || ?1",
+            params![app_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let Some(game_id) = mapped else {
+        return (format!("gse:{app_id}"), format!("Steam {app_id}"));
+    };
+    let toast = conn
+        .query_row(
+            "SELECT name FROM tracked_games WHERE id = ?1",
+            params![&game_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| game_id.clone());
+    (game_id, toast)
+}
+
 fn parse_gse(app_id: &str, file: &Path) {
     let Ok(raw) = fs::read_to_string(file) else {
         return;
@@ -752,19 +843,17 @@ fn parse_gse(app_id: &str, file: &Path) {
     let Ok(conn) = open_db() else {
         return;
     };
-    let game_id = format!("gse:{app_id}");
-    let _ = upsert_tracked_game(
-        &conn,
-        &game_id,
-        &format!("Steam {app_id}"),
-        "steam",
-        "gse",
-        None,
-        None,
-    );
+    let (game_id, toast_name) = resolve_gse_unlock_target(&conn, app_id);
+    if game_id == format!("gse:{app_id}") {
+        let _ = upsert_tracked_game(&conn, &game_id, &toast_name, "steam", "gse", None, None);
+    }
     let Some(obj) = val.as_object() else {
         return;
     };
+    let defs = list_for_game(&conn, &game_id)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
     for (ach_id, value) in obj {
         let Some(v) = value.as_object() else {
             continue;
@@ -776,20 +865,53 @@ fn parse_gse(app_id: &str, file: &Path) {
         if !earned {
             continue;
         }
-        let title = v
-            .get("name")
+        let save_title = v
+            .get("displayName")
             .and_then(|x| x.as_str())
-            .or_else(|| v.get("displayName").and_then(|x| x.as_str()))
-            .unwrap_or(ach_id);
+            .or_else(|| v.get("name").and_then(|x| x.as_str()));
+        let (title, icon) = toast_from_def(&defs, ach_id, save_title);
         let unlocked_at = v
             .get("earned_time")
             .and_then(|x| x.as_f64())
             .map(|t| (t * 1000.0) as i64);
-        let desc = v.get("description").and_then(|x| x.as_str());
-        if let Ok(true) = record_unlock(&conn, &game_id, ach_id, title, desc, None, unlocked_at) {
-            emit_unlock(&format!("Steam {app_id}"), title, None);
+        let desc = defs
+            .iter()
+            .find(|d| d["achievement_id"].as_str() == Some(ach_id.as_str()))
+            .and_then(|d| d["description"].as_str())
+            .or_else(|| v.get("description").and_then(|x| x.as_str()));
+        if let Ok(true) = record_unlock(
+            &conn,
+            &game_id,
+            ach_id,
+            &title,
+            desc,
+            icon.as_deref(),
+            unlocked_at,
+        ) {
+            emit_unlock(&toast_name, &title, icon.as_deref());
         }
     }
+}
+
+/// Prefer Steam schema title/icon over GSE save keys (API ids, no CDN URL).
+fn toast_from_def(
+    defs: &[Value],
+    ach_id: &str,
+    save_title: Option<&str>,
+) -> (String, Option<String>) {
+    let def = defs
+        .iter()
+        .find(|d| d["achievement_id"].as_str() == Some(ach_id));
+    let title = def
+        .and_then(|d| d["title"].as_str())
+        .or(save_title)
+        .unwrap_or(ach_id)
+        .to_string();
+    let icon = def
+        .and_then(|d| d["icon_unlocked"].as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    (title, icon)
 }
 
 fn scan_gse(state: &mut WatchState) {
@@ -855,7 +977,10 @@ fn parse_epic(namespace: &str, file: &Path) {
         if ach_id.is_empty() {
             continue;
         }
-        let unlocked = row.get("unlocked").and_then(|x| x.as_bool()).unwrap_or(false)
+        let unlocked = row
+            .get("unlocked")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false)
             || row.get("unlocked").and_then(|x| x.as_i64()) == Some(1)
             || row.get("progress").and_then(|x| x.as_i64()) == Some(100)
             || row.contains_key("UnlockTime");
@@ -971,10 +1096,10 @@ fn scan_eos_hooks(state: &mut WatchState) {
         let defs = defs.as_array().cloned().unwrap_or_default();
         let gname = game["name"].as_str().unwrap_or("Game");
         for ach_id in ids {
-            let def = defs.iter().find(|d| d["achievement_id"].as_str() == Some(&ach_id));
-            let title = def
-                .and_then(|d| d["title"].as_str())
-                .unwrap_or(&ach_id);
+            let def = defs
+                .iter()
+                .find(|d| d["achievement_id"].as_str() == Some(&ach_id));
+            let title = def.and_then(|d| d["title"].as_str()).unwrap_or(&ach_id);
             let icon = def.and_then(|d| d["icon_unlocked"].as_str());
             let desc = def.and_then(|d| d["description"].as_str());
             if let Ok(true) = record_unlock(&conn, gid, &ach_id, title, desc, icon, None) {
@@ -1007,11 +1132,7 @@ fn parse_remedy_chunk(file: &Path, state: &mut WatchState) {
     if count == 0 || count > 512 || buf.len() < 8 + count * 16 {
         return;
     }
-    let parts: Vec<&str> = file
-        .to_str()
-        .unwrap_or("")
-        .split(['/', '\\'])
-        .collect();
+    let parts: Vec<&str> = file.to_str().unwrap_or("").split(['/', '\\']).collect();
     let ach_idx = parts
         .iter()
         .position(|p| p.eq_ignore_ascii_case("achievements"));
@@ -1025,8 +1146,7 @@ fn parse_remedy_chunk(file: &Path, state: &mut WatchState) {
     for i in 0..count {
         let off = 8 + i * 16;
         let id = u32::from_le_bytes([buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]]);
-        let status =
-            u32::from_le_bytes([buf[off + 8], buf[off + 9], buf[off + 10], buf[off + 11]]);
+        let status = u32::from_le_bytes([buf[off + 8], buf[off + 9], buf[off + 10], buf[off + 11]]);
         if status == 0 {
             continue;
         }
@@ -1059,10 +1179,10 @@ fn parse_remedy_chunk(file: &Path, state: &mut WatchState) {
     let defs = defs.as_array().cloned().unwrap_or_default();
     let gname = game["name"].as_str().unwrap_or("Game");
     for ach_id in fresh {
-        let def = defs.iter().find(|d| d["achievement_id"].as_str() == Some(&ach_id));
-        let title = def
-            .and_then(|d| d["title"].as_str())
-            .unwrap_or(&ach_id);
+        let def = defs
+            .iter()
+            .find(|d| d["achievement_id"].as_str() == Some(&ach_id));
+        let title = def.and_then(|d| d["title"].as_str()).unwrap_or(&ach_id);
         let icon = def.and_then(|d| d["icon_unlocked"].as_str());
         let desc = def.and_then(|d| d["description"].as_str());
         if let Ok(true) = record_unlock(&conn, gid, &ach_id, title, desc, icon, None) {
@@ -1136,10 +1256,7 @@ pub fn spawn_watchers() {
         }
         state.started = true;
         // Skip historical EOS hook lines (Electron parity).
-        state.eos_offset = eos_hooks_path()
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        state.eos_offset = eos_hooks_path().metadata().map(|m| m.len()).unwrap_or(0);
     }
     scan_all(true);
     tokio::spawn(async move {
@@ -1153,4 +1270,91 @@ pub fn spawn_watchers() {
             scan_all(ticks % 5 == 0);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mem_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE tracked_games (
+               id TEXT PRIMARY KEY,
+               name TEXT NOT NULL,
+               platform TEXT NOT NULL,
+               exe_path TEXT,
+               process_name TEXT,
+               source TEXT NOT NULL,
+               updated_at INTEGER NOT NULL,
+               deleted_at INTEGER,
+               rev INTEGER NOT NULL DEFAULT 1
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn mapped_appid_uses_tracked_name() {
+        let conn = mem_db();
+        conn.execute(
+            "INSERT INTO sync_state (key, value) VALUES ('library_by_appid:480', 'custom:game')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tracked_games (id, name, platform, source, updated_at, rev)
+             VALUES ('custom:game', 'Half-Life 2', 'steam', 'library', 1, 1)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_gse_unlock_target(&conn, "480"),
+            ("custom:game".into(), "Half-Life 2".into())
+        );
+    }
+
+    #[test]
+    fn mapped_appid_without_tracked_row_uses_library_id() {
+        let conn = mem_db();
+        conn.execute(
+            "INSERT INTO sync_state (key, value) VALUES ('library_by_appid:480', 'custom:game')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_gse_unlock_target(&conn, "480"),
+            ("custom:game".into(), "custom:game".into())
+        );
+    }
+
+    #[test]
+    fn unmapped_appid_falls_back_to_gse() {
+        let conn = mem_db();
+        assert_eq!(
+            resolve_gse_unlock_target(&conn, "480"),
+            ("gse:480".into(), "Steam 480".into())
+        );
+    }
+
+    #[test]
+    fn gse_toast_uses_schema_title_and_cdn_icon() {
+        let defs = vec![json!({
+            "achievement_id": "NoviceAdventurer",
+            "title": "Novice Adventurer",
+            "icon_unlocked": "https://cdn.example/icon.jpg",
+        })];
+        let (title, icon) = toast_from_def(&defs, "NoviceAdventurer", Some("NoviceAdventurer"));
+        assert_eq!(title, "Novice Adventurer");
+        assert_eq!(icon.as_deref(), Some("https://cdn.example/icon.jpg"));
+    }
+
+    #[test]
+    fn gse_toast_without_def_has_no_icon() {
+        let (title, icon) = toast_from_def(&[], "ACH_X", Some("Saved"));
+        assert_eq!(title, "Saved");
+        assert_eq!(icon, None);
+    }
 }

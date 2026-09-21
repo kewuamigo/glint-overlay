@@ -47,14 +47,18 @@ use std::path::Path;
 use anyhow::{Context, bail};
 use glint_overlay_common::ipc::create_ipc_addr;
 use tokio::{net::windows::named_pipe::ClientOptions, select, time::sleep};
+use windows::Win32::Foundation::HANDLE;
 
 pub use crate::client::{IpcClientConn, IpcClientEventStream};
 /// Inject the overlay DLL (arch-picked) and return the module handle, without
 /// opening IPC — for callers that hand the pipe name to another process.
 pub use crate::injector::inject as inject_overlay_module;
+pub use crate::injector::inject_stopped;
+pub use crate::injector::set_create_process_w_original;
 pub use paths::{
-    overlay_dll_marker, overlay_dll_paths, overlay_dll_ref, OverlayDllPaths, OVERLAY_DLL_X64,
-    METRICS_DLL_NAME,
+    ACHIEVEMENTS_DLL_NAME, METRICS_DLL_NAME, OVERLAY_DLL_X64, OverlayDllPaths, overlay_dll_marker,
+    overlay_dll_paths,
+    overlay_dll_ref,
 };
 
 /// Paths to overlay DLLs for different architectures.
@@ -108,7 +112,8 @@ pub async fn connect_pipe(
     loop {
         match ClientOptions::new().open(addr) {
             Ok(client) => {
-                let remaining = deadline.map(|d| d.saturating_duration_since(tokio::time::Instant::now()));
+                let remaining =
+                    deadline.map(|d| d.saturating_duration_since(tokio::time::Instant::now()));
                 let connect = IpcClientConn::new(client);
                 if let Some(rem) = remaining {
                     return select! {
@@ -137,13 +142,29 @@ pub async fn connect_pipe(
 
 /// Inject an arbitrary DLL into the target process using the same mechanism as overlay inject
 /// (`NtOpenProcess` + `RtlCreateUserThread` + `LoadLibraryW`), with arch detection.
-pub fn inject_dll(
-    pid: u32,
-    dll_path: &Path,
-    timeout: Option<Duration>,
-) -> anyhow::Result<u32> {
+pub fn inject_dll(pid: u32, dll_path: &Path, timeout: Option<Duration>) -> anyhow::Result<u32> {
     injector::inject(
         pid,
+        OverlayDll {
+            x64: Some(dll_path),
+            x86: Some(dll_path),
+            arm64: Some(dll_path),
+        },
+        timeout,
+    )
+}
+
+/// Inject while the primary thread is stopped (child `CreateProcess`). x64: Steam stub
+/// (`Get/SetThreadContext`). Wow64: `bin\x86launcher.exe`. Does not `ResumeThread`.
+pub fn inject_dll_stopped(
+    process: HANDLE,
+    thread: HANDLE,
+    dll_path: &Path,
+    timeout: Option<Duration>,
+) -> anyhow::Result<()> {
+    injector::inject_stopped(
+        process,
+        thread,
         OverlayDll {
             x64: Some(dll_path),
             x86: Some(dll_path),

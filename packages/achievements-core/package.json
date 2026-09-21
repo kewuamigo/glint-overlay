@@ -12,7 +12,8 @@
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && node scripts/emit-test.mjs",
+    "test": "npm run build && node --test test/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",

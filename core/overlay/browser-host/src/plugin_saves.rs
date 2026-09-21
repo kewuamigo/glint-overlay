@@ -10,8 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::core::PWSTR;
 
@@ -55,20 +54,14 @@ struct PlaceholderContext {
 /// must call [`dispatch_async`] so that work runs on `spawn_blocking`.
 pub fn dispatch(method: &str, args_json: &str) -> Result<String, String> {
     match method {
-        "game.saves.getGameDir" => {
-            with_store(|s| Ok(json!(s.game_dir).to_string()))
-        }
-        "game.saves.getManifestEntry" => {
-            with_store(|s| {
-                Ok(match get_manifest_entry(s)? {
-                    Some(v) => v.to_string(),
-                    None => "null".into(),
-                })
+        "game.saves.getGameDir" => with_store(|s| Ok(json!(s.game_dir).to_string())),
+        "game.saves.getManifestEntry" => with_store(|s| {
+            Ok(match get_manifest_entry(s)? {
+                Some(v) => v.to_string(),
+                None => "null".into(),
             })
-        }
-        "game.saves.getSaveLocations" => {
-            with_store(|s| Ok(get_save_locations(s)?.to_string()))
-        }
+        }),
+        "game.saves.getSaveLocations" => with_store(|s| Ok(get_save_locations(s)?.to_string())),
         "game.saves.findGame" => {
             let args: Vec<Value> = serde_json::from_str(args_json)
                 .map_err(|e| format!("invalid findGame args: {e}"))?;
@@ -102,8 +95,7 @@ pub async fn dispatch_async(method: &str, args_json: &str) -> Result<String, Str
 pub fn allowlist_roots(plugin_id: &str, access: &apps::AppAccess) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let is_save_manager = plugin_id == "save-manager";
-    let has_game =
-        access.permissions.iter().any(|p| p == "game:process") || is_save_manager;
+    let has_game = access.permissions.iter().any(|p| p == "game:process") || is_save_manager;
     let has_fs = access
         .permissions
         .iter()
@@ -143,7 +135,9 @@ fn with_store<T>(f: impl FnOnce(&mut StoreState) -> Result<T, String>) -> Result
     f(state)
 }
 
-fn with_existing_store<T>(f: impl FnOnce(&mut StoreState) -> Result<T, String>) -> Result<T, String> {
+fn with_existing_store<T>(
+    f: impl FnOnce(&mut StoreState) -> Result<T, String>,
+) -> Result<T, String> {
     let mut guard = STORE
         .lock()
         .map_err(|_| "save manifest store lock poisoned".to_string())?;
@@ -471,9 +465,7 @@ fn build_db_from_yaml(yaml_path: &Path, db_path: &Path) -> Result<(), String> {
             .prepare("INSERT INTO game_aliases (alias_title, target_title) VALUES (?, ?)")
             .map_err(|e| e.to_string())?;
         let mut insert_file = tx
-            .prepare(
-                "INSERT INTO game_files (game_title, path_template, tags) VALUES (?, ?, ?)",
-            )
+            .prepare("INSERT INTO game_files (game_title, path_template, tags) VALUES (?, ?, ?)")
             .map_err(|e| e.to_string())?;
         let mut insert_lookup = tx
             .prepare("INSERT INTO game_lookup (game_title, norm, kind) VALUES (?, ?, ?)")
@@ -485,11 +477,7 @@ fn build_db_from_yaml(yaml_path: &Path, db_path: &Path) -> Result<(), String> {
                 .notes
                 .as_ref()
                 .map(|n| serde_json::to_string(n).unwrap_or_else(|_| "[]".into()));
-            let has_files = entry
-                .files
-                .as_ref()
-                .map(|f| !f.is_empty())
-                .unwrap_or(false);
+            let has_files = entry.files.as_ref().map(|f| !f.is_empty()).unwrap_or(false);
 
             if let Some(alias) = &entry.alias {
                 insert_alias
@@ -658,8 +646,12 @@ fn build_placeholder(
         home: home.clone(),
         win_local_app_data: std::env::var("LOCALAPPDATA")
             .unwrap_or_else(|_| Path::new(&home).join("AppData/Local").display().to_string()),
-        win_app_data: std::env::var("APPDATA")
-            .unwrap_or_else(|_| Path::new(&home).join("AppData/Roaming").display().to_string()),
+        win_app_data: std::env::var("APPDATA").unwrap_or_else(|_| {
+            Path::new(&home)
+                .join("AppData/Roaming")
+                .display()
+                .to_string()
+        }),
         win_documents: std::env::var("USERPROFILE")
             .map(|p| Path::new(&p).join("Documents").display().to_string())
             .unwrap_or_else(|_| Path::new(&home).join("Documents").display().to_string()),
@@ -738,11 +730,7 @@ fn ensure_context(state: &mut StoreState) -> Result<(), String> {
         &store_user_id,
         steam_id,
     ));
-    state.manifest_key = Some(match_game(
-        &state.conn,
-        &state.game_dir,
-        &state.exe_name,
-    )?);
+    state.manifest_key = Some(match_game(&state.conn, &state.game_dir, &state.exe_name)?);
     Ok(())
 }
 
@@ -767,9 +755,7 @@ fn match_game(conn: &Connection, game_dir: &str, exe_name: &str) -> Result<Optio
     let folder_norm = normalize_key(folder_name);
     {
         let mut stmt = conn
-            .prepare(
-                "SELECT game_title FROM game_lookup WHERE norm = ? AND kind = 'title' LIMIT 1",
-            )
+            .prepare("SELECT game_title FROM game_lookup WHERE norm = ? AND kind = 'title' LIMIT 1")
             .map_err(|e| e.to_string())?;
         if let Some(title) = stmt
             .query_row(params![folder_norm], |r| r.get::<_, String>(0))
@@ -850,9 +836,7 @@ fn get_game(conn: &Connection, title: &str) -> Result<Option<Value>, String> {
     };
 
     let mut files_stmt = conn
-        .prepare(
-            "SELECT path_template, tags FROM game_files WHERE game_title = ? ORDER BY rowid",
-        )
+        .prepare("SELECT path_template, tags FROM game_files WHERE game_title = ? ORDER BY rowid")
         .map_err(|e| e.to_string())?;
     let file_rows = files_stmt
         .query_map(params![canonical], |r| {

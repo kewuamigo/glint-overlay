@@ -101,14 +101,28 @@ function saveLayout(windows: OverlayWindowState[]): void {
   }
 }
 
+const layoutWindows = { current: [] as OverlayWindowState[] };
+
+export function persistOverlayLayout(): void {
+  saveLayout(layoutWindows.current);
+}
+
+function isBrowserWindow(win: { manifestId: string; key?: string }): boolean {
+  return win.manifestId === 'browser' || win.key === 'browser:main';
+}
+
 function saveSession(windows: OverlayWindowState[], focusedKey: string | null): void {
   try {
+    // Never persist the browser app — it needs an explicit openSession from the
+    // dock. Restoring it without that leaves a stuck window that won't close.
+    const restorable = windows.filter((w) => !isBrowserWindow(w));
+    const focusOk =
+      focusedKey != null && restorable.some((w) => w.key === focusedKey)
+        ? focusedKey
+        : null;
     const session: SavedSession = {
-      windows: windows.map(({ zIndex: _z, ...rest }) => rest),
-      focusedKey:
-        focusedKey && windows.some((w) => w.key === focusedKey)
-          ? focusedKey
-          : null,
+      windows: restorable.map(({ zIndex: _z, ...rest }) => rest),
+      focusedKey: focusOk,
     };
     localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   } catch {
@@ -118,7 +132,9 @@ function saveSession(windows: OverlayWindowState[], focusedKey: string | null): 
 
 function restoreWindows(session: SavedSession): OverlayWindowState[] {
   const layout = loadLayout();
-  return session.windows.map((win, index) => {
+  return session.windows
+    .filter((win) => !isBrowserWindow(win))
+    .map((win, index) => {
       const savedBounds = layout[win.key];
       const bounds = savedBounds
         ? {
@@ -147,6 +163,7 @@ function initialWindows(): OverlayWindowState[] {
 function initialFocusedKey(windows: OverlayWindowState[]): string | null {
   const session = loadSession();
   if (!session?.focusedKey) return windows[0]?.key ?? null;
+  if (session.focusedKey === 'browser:main') return windows[0]?.key ?? null;
   return windows.some((w) => w.key === session.focusedKey)
     ? session.focusedKey
     : windows[0]?.key ?? null;
@@ -165,6 +182,7 @@ export function useOverlayWindows() {
     () => loadInitialState().focusedKey,
   );
   const layoutRef = useRef(loadLayout());
+  layoutWindows.current = windows;
 
   const bringToFront = useCallback((key: string) => {
     zCounter += 1;
@@ -259,14 +277,13 @@ export function useOverlayWindows() {
       const next = prev.map((win) =>
         win.key === key ? { ...win, bounds } : win,
       );
-      saveLayout(next);
+      layoutWindows.current = next;
       return next;
     });
   }, []);
 
   useEffect(() => {
     if (windows.length > 0) {
-      saveLayout(windows);
       saveSession(windows, focusedKey);
       return;
     }

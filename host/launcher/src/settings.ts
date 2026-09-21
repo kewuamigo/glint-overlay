@@ -5,12 +5,15 @@ export type LauncherSettings = {
   steamGridDbApiKey: string;
   /** When true, overlay host gets GLINT_DEBUG=1 (CEF stage logs → log file). */
   overlayDebug: boolean;
+  /** When true, launcher checks GitHub Releases after startup (24h interval). */
+  otaAutoCheck: boolean;
 };
 
 const DEFAULTS: LauncherSettings = {
   steamApiKey: '',
   steamGridDbApiKey: '',
   overlayDebug: false,
+  otaAutoCheck: true,
 };
 
 export function loadSettings(): LauncherSettings {
@@ -20,6 +23,7 @@ export function loadSettings(): LauncherSettings {
     steamGridDbApiKey:
       getSetting('steamGridDbApiKey') ?? DEFAULTS.steamGridDbApiKey,
     overlayDebug: getSetting('overlayDebug') === '1',
+    otaAutoCheck: getSetting('otaAutoCheck') !== '0',
   };
 }
 
@@ -33,6 +37,9 @@ export function saveSettings(partial: Partial<LauncherSettings>): LauncherSettin
   }
   if (typeof partial.overlayDebug === 'boolean') {
     setSetting('overlayDebug', partial.overlayDebug ? '1' : '0');
+  }
+  if (typeof partial.otaAutoCheck === 'boolean') {
+    setSetting('otaAutoCheck', partial.otaAutoCheck ? '1' : '0');
   }
   return loadSettings();
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   launcherInvoke,
   type InstalledApp,
@@ -6,6 +6,7 @@ import {
   type ScannedGame,
   type StoreCatalog,
   type GameArt,
+  type PrepareState,
 } from '../launcher-bridge';
 
 export function useLauncher() {
@@ -20,6 +21,31 @@ export function useLauncher() {
   const [steamKeyConfigured, setSteamKeyConfigured] = useState(false);
   const [covers, setCovers] = useState<Record<string, GameArt>>({});
   const [coversTick, setCoversTick] = useState(0);
+  const [prepareStatuses, setPrepareStatuses] = useState<
+    Record<string, PrepareState>
+  >({});
+  const [forcingGse, setForcingGse] = useState<Record<string, true>>({});
+  const prepareInFlight = useRef(new Set<string>());
+
+  const refreshPrepareStatuses = useCallback(async () => {
+    try {
+      const map = await launcherInvoke<Record<string, PrepareState>>(
+        'achievements.prepareStatus',
+      );
+      if (!map || typeof map !== 'object') return;
+      setPrepareStatuses((prev) => {
+        const next = { ...map };
+        for (const id of prepareInFlight.current) {
+          if (prev[id]?.status === 'pending') {
+            next[id] = prev[id];
+          }
+        }
+        return next;
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const refreshGames = useCallback(async (fullScan = false) => {
     try {
@@ -32,7 +58,49 @@ export function useLauncher() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+    await refreshPrepareStatuses();
+  }, [refreshPrepareStatuses]);
+
+  const retryPrepare = useCallback(
+    async (game: ScannedGame, steamAppId?: string, forceGse?: boolean) => {
+      if (forceGse) {
+        setForcingGse((prev) => ({ ...prev, [game.id]: true }));
+      }
+      prepareInFlight.current.add(game.id);
+      setPrepareStatuses((prev) => ({
+        ...prev,
+        [game.id]: {
+          status: 'pending',
+          steamAppId,
+          updatedAt: Date.now(),
+        },
+      }));
+      try {
+        await launcherInvoke('achievements.prepare', [
+          {
+            ...game,
+            ...(steamAppId ? { steamAppId } : {}),
+            ...(forceGse ? { forceGse: true } : {}),
+          },
+        ]);
+        prepareInFlight.current.delete(game.id);
+        await refreshPrepareStatuses();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        prepareInFlight.current.delete(game.id);
+        await refreshPrepareStatuses();
+      } finally {
+        prepareInFlight.current.delete(game.id);
+        setForcingGse((prev) => {
+          if (!prev[game.id]) return prev;
+          const next = { ...prev };
+          delete next[game.id];
+          return next;
+        });
+      }
+    },
+    [refreshPrepareStatuses],
+  );
 
   const coversKey = games.map((g) => `${g.id}\t${g.name}`).join('\n');
 
@@ -199,6 +267,12 @@ export function useLauncher() {
     games,
     covers,
     refreshCovers: () => setCoversTick((n) => n + 1),
+    patchCover: (gameId: string, art: GameArt) => {
+      setCovers((prev) => ({
+        ...prev,
+        [gameId]: { ...prev[gameId], ...art },
+      }));
+    },
     profile,
     catalog,
     installed,
@@ -207,6 +281,8 @@ export function useLauncher() {
     launching,
     installing,
     featured,
+    prepareStatuses,
+    forcingGse,
     steamKeyConfigured,
     setSteamKeyConfigured,
     refreshAll,
@@ -214,6 +290,7 @@ export function useLauncher() {
     refreshCatalog,
     launchOverlay,
     launchGame,
+    retryPrepare,
     installApp,
     addGame,
     resetLibrary,

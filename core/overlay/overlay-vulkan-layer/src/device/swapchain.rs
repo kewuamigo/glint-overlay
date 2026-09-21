@@ -1,12 +1,11 @@
-use glint_overlay_core::backend::Backends;
 use ash::vk::{self, AllocationCallbacks, Handle};
+use glint_overlay_core::backend::Backends;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tracing::{debug, trace};
 
 use crate::{
-    device::DISPATCH_TABLE, instance::surface::get_surface_hwnd,
-    renderer::VulkanRenderer,
+    device::DISPATCH_TABLE, instance::surface::get_surface_hwnd, renderer::VulkanRenderer,
 };
 use glint_overlay_core::IntDashMap;
 

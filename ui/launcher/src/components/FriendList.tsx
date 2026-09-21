@@ -162,9 +162,28 @@ export function FriendRail({ onSelectFriend }: Props) {
 
 export function AddGameForm({ onAdd }: { onAdd: (name: string, exe: string) => void }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const pickAndAdd = async () => {
+  const pickFolder = async () => {
     setBusy(true);
+    setError(null);
+    try {
+      const picked = await launcherInvoke<{
+        exe: string;
+        name: string;
+      } | null>('games.pickFolder');
+      if (!picked) return;
+      onAdd(picked.name, picked.exe);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickExe = async () => {
+    setBusy(true);
+    setError(null);
     try {
       const exe = await launcherInvoke<string | null>('achievements.pickExe');
       if (!exe) return;
@@ -177,13 +196,24 @@ export function AddGameForm({ onAdd }: { onAdd: (name: string, exe: string) => v
   };
 
   return (
-    <button
-      type="button"
-      className="btn-secondary add-game-btn"
-      disabled={busy}
-      onClick={() => void pickAndAdd()}
-    >
-      {busy ? 'Browsing…' : '+ Add Game (exe)'}
-    </button>
+    <>
+      <button
+        type="button"
+        className="btn-secondary add-game-btn"
+        disabled={busy}
+        onClick={() => void pickFolder()}
+      >
+        {busy ? 'Browsing…' : '+ Add Game'}
+      </button>
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={busy}
+        onClick={() => void pickExe()}
+      >
+        Add exe
+      </button>
+      {error ? <span className="library-add-error">{error}</span> : null}
+    </>
   );
 }

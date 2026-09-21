@@ -1,0 +1,18 @@
+[package]
+name = "glint-achievements-native"
+version = "0.1.0"
+description = "In-process achievement unlock hooks (EOS + Uplay)"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "glint_achievements_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+] }
+serde_json = "1"
+minhook-sys = "0.1.1"

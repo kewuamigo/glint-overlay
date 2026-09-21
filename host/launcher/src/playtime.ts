@@ -1,4 +1,5 @@
-import { accumulatePlaytime, getDb } from './db.js';
+import { accumulatePlaytime, getAllPlaytimeSeconds, getDb } from './db.js';
+import { buildSessionSnapshot, writeSessionSnapshot } from './session-snapshot.js';
 
 /** Last tick timestamp per running game_id. */
 const lastTick = new Map<string, number>();
@@ -7,10 +8,11 @@ const MAX_DELTA_SEC = 30;
 
 /**
  * Call on each games.scan while games may be running.
- * Accumulates wall-clock seconds since the previous tick for each running game.
+ * Accumulates wall-clock seconds since the previous tick for each running game,
+ * then refreshes the pid-keyed session.json sidecar.
  */
 export function tickPlaytime(
-  games: Array<{ id: string; name: string; running: boolean }>,
+  games: Array<{ id: string; name: string; pid?: number; running: boolean }>,
 ): void {
   getDb();
   const now = Date.now();
@@ -31,4 +33,6 @@ export function tickPlaytime(
   for (const id of [...lastTick.keys()]) {
     if (!runningIds.has(id)) lastTick.delete(id);
   }
+
+  writeSessionSnapshot(buildSessionSnapshot(games, getAllPlaytimeSeconds()));
 }

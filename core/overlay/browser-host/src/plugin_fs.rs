@@ -32,7 +32,10 @@ pub fn assert_path_allowed(target_path: &str, allowed: &HashSet<PathBuf>) -> Res
 }
 
 /// Electron `buildAllowedPaths` including save-service game/save roots (F007).
-pub fn build_allowed_paths(plugin_id: &str, access: &apps::AppAccess) -> Result<HashSet<PathBuf>, String> {
+pub fn build_allowed_paths(
+    plugin_id: &str,
+    access: &apps::AppAccess,
+) -> Result<HashSet<PathBuf>, String> {
     let plugin_dir = apps::apps_root().join(plugin_id);
     let mut allowed = HashSet::new();
     allowed.insert(absolute_norm(&plugin_dir)?);
@@ -86,14 +89,22 @@ fn assert_allowed(plugin_id: &str, access: &apps::AppAccess, target: &str) -> Re
     assert_path_allowed(target, &allowed)
 }
 
-pub fn read_text(plugin_id: &str, access: &apps::AppAccess, target: &str) -> Result<String, String> {
+pub fn read_text(
+    plugin_id: &str,
+    access: &apps::AppAccess,
+    target: &str,
+) -> Result<String, String> {
     assert_allowed(plugin_id, access, target)?;
     let text = std::fs::read_to_string(target).map_err(|e| format!("fs.readText failed: {e}"))?;
     Ok(json!(text).to_string())
 }
 
 /// Wire: JSON `number[]` (PluginContext converts to Uint8Array).
-pub fn read_bytes(plugin_id: &str, access: &apps::AppAccess, target: &str) -> Result<String, String> {
+pub fn read_bytes(
+    plugin_id: &str,
+    access: &apps::AppAccess,
+    target: &str,
+) -> Result<String, String> {
     assert_allowed(plugin_id, access, target)?;
     let bytes = std::fs::read(target).map_err(|e| format!("fs.readBytes failed: {e}"))?;
     Ok(Value::Array(bytes.into_iter().map(|b| json!(b)).collect()).to_string())
@@ -231,7 +242,11 @@ fn finalize_pick(
             }
         }
     }
-    plugin_storage::set(&plugin_dir, "fs:grantedPaths", Value::Array(next.into_iter().map(Value::String).collect()))?;
+    plugin_storage::set(
+        &plugin_dir,
+        "fs:grantedPaths",
+        Value::Array(next.into_iter().map(Value::String).collect()),
+    )?;
     Ok(json!(chosen).to_string())
 }
 
@@ -297,7 +312,11 @@ unsafe fn run_file_dialog_inner(folder: bool) -> Result<Option<String>, String> 
 }
 
 /// Electron `shell.openPath` — empty string on success, error message otherwise.
-pub fn open_path(plugin_id: &str, access: &apps::AppAccess, target: &str) -> Result<String, String> {
+pub fn open_path(
+    plugin_id: &str,
+    access: &apps::AppAccess,
+    target: &str,
+) -> Result<String, String> {
     let allowed = build_allowed_paths(plugin_id, access)?;
     assert_path_allowed(target, &allowed)?;
     let err = shell_execute_open(target);

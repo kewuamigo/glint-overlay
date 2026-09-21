@@ -39,13 +39,44 @@ if (-not (Test-Path $Dll)) {
     throw "Expected glint_overlay.dll not found in target\release"
 }
 
+function Copy-OverlayDll {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [int]$Attempts = 5,
+        [int]$DelayMs = 400
+    )
+    $last = $null
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            Copy-Item -Force $Source $Destination
+            return
+        } catch {
+            $last = $_
+            $msg = $_.Exception.Message
+            $locked = $msg -match 'user-mapped section|being used by another process|cannot access the file'
+            if (-not $locked -or $i -eq $Attempts) { break }
+            Write-Host "Destination locked (attempt $i/$Attempts); retry in ${DelayMs}ms..." -ForegroundColor Yellow
+            Start-Sleep -Milliseconds $DelayMs
+        }
+    }
+    Write-Host @"
+Cannot copy overlay DLL to:
+  $Destination
+
+Windows still has the file memory-mapped (typical: game with Glint injected, or glint-browser still running).
+Close the game / overlay host, then re-run this script.
+"@ -ForegroundColor Red
+    throw $last
+}
+
 $DllDest = Join-Path $OutDir "glint_overlay-x64.dll"
-Copy-Item -Force $Dll $DllDest
+Copy-OverlayDll -Source $Dll -Destination $DllDest
 Write-Host "Copied -> $DllDest" -ForegroundColor Green
 
 $PkgDir = Join-Path $RepoRoot "host\native"
 New-Item -ItemType Directory -Force -Path $PkgDir | Out-Null
-Copy-Item -Force $Dll (Join-Path $PkgDir "glint_overlay-x64.dll")
+Copy-OverlayDll -Source $Dll -Destination (Join-Path $PkgDir "glint_overlay-x64.dll")
 Write-Host "Copied -> host\native\glint_overlay-x64.dll" -ForegroundColor Green
 
 Write-Host "Overlay native artifacts ready." -ForegroundColor Green

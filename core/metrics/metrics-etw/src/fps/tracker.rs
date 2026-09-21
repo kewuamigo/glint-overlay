@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use glint_metrics_common::timing::{ema, FrametimeEma, FpsWindow as FpsWindowCore};
+use glint_metrics_common::timing::{FpsWindow as FpsWindowCore, FrametimeEma, ema};
 
 use super::frame_gen::{
     FrameGenState, hooked_frame_gen_active, native_without_frame_gen,
@@ -368,7 +368,11 @@ impl HardwareFpsTracker {
         // so `game_fps` is the only correct in-process native signal.
         if let Some(hook) = hooked.filter(|h| h.game_fps > 0.0 && h.game_fps.is_finite()) {
             let native = hook.game_fps;
-            let display = if raw_display > 0.0 { raw_display } else { hook.fps };
+            let display = if raw_display > 0.0 {
+                raw_display
+            } else {
+                hook.fps
+            };
             let frame_gen_active = hooked_frame_gen_active(display, native);
             let kind = if frame_gen_active {
                 if detected_kind == FrameGenKind::None {
@@ -408,10 +412,14 @@ impl HardwareFpsTracker {
             }
 
             if detected_kind != FrameGenKind::None {
-                let display = if raw_display > 0.0 { raw_display } else { hook.fps };
+                let display = if raw_display > 0.0 {
+                    raw_display
+                } else {
+                    hook.fps
+                };
                 let present = self.present_hist.current_fps();
-                let present_is_native = present >= 24.0 && display > 0.0
-                    && hooked_frame_gen_active(display, present);
+                let present_is_native =
+                    present >= 24.0 && display > 0.0 && hooked_frame_gen_active(display, present);
                 if present_is_native {
                     return self.finish_snapshot(
                         present,

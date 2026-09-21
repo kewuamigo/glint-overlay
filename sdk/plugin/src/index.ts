@@ -50,6 +50,22 @@ export type FrameGenKind = 'none' | 'dlss' | 'fsr' | 'xefg' | 'afmf' | 'unknown'
 /** How the native/generated frame split was derived. */
 export type FrameSplitSource = 'driver' | 'hook' | 'etw';
 
+export type MetricsDetailLevel = 'classic' | 'util' | 'full';
+
+export interface MetricsTiles {
+  fps?: boolean;
+  cpu?: boolean;
+  gpu?: boolean;
+  ram?: boolean;
+  vram?: boolean;
+  graph?: boolean;
+}
+
+export interface MetricsPrefs {
+  detailLevel: MetricsDetailLevel;
+  tiles: MetricsTiles;
+}
+
 export interface MetricsSnapshot {
   nativeFps: number;
   generatedFps: number;
@@ -63,6 +79,14 @@ export interface MetricsSnapshot {
   generatedMax: number;
   nativeFrameTimeMs: number;
   displayFrameTimeMs: number;
+  gpuUtil?: number;
+  cpuUtil?: number;
+  ramUsedMb?: number;
+  ramTotalMb?: number;
+  vramDedicatedMb?: number;
+  vramSharedMb?: number;
+  detailLevel?: MetricsDetailLevel;
+  tiles?: MetricsTiles;
 }
 
 export const defaultMetrics: MetricsSnapshot = {
@@ -260,6 +284,8 @@ export interface NativeOverlayAPI {
 
 export interface NativeMetricsAPI {
   getSnapshot(): Promise<MetricsSnapshot>;
+  getPrefs(): Promise<MetricsPrefs>;
+  setPrefs(prefs: Partial<MetricsPrefs>): Promise<MetricsPrefs>;
 }
 
 export interface NativeWindowAPI {

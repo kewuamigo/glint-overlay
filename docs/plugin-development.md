@@ -7,7 +7,6 @@ Glint apps are React bundles loaded at runtime. Each app declares capabilities i
 - **Built-in core apps** ship in the repo under `internal-apps/<id>/` (`builtin: true`) — Metrics, Browser, Achievements.
 - **External apps** install to `%APPDATA%/Glint/apps/<id>/`.
 
-For architecture, IPC channels, and Phase 3 memory APIs, see the design spec: [Plugin Platform & Engine Host](superpowers/specs/2026-07-06-plugin-platform-design.md).
 
 ---
 
@@ -231,4 +230,4 @@ Invalid app directories (bad manifest, missing entry file) are skipped with a lo
 ## Related docs
 
 - [Fejlesztői útmutató (app fejlesztés + telepítés)](development.md)
-- [Plugin Platform & Engine Host design spec](superpowers/specs/2026-07-06-plugin-platform-design.md) — full architecture, IPC, SaveAPI, Phase 3 memory
+

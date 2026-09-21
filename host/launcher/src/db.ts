@@ -56,6 +56,15 @@ function migrateSchema(database: Database.Database): void {
       icon TEXT,
       grid TEXT,
       hero TEXT,
+      logo TEXT,
+      icon_mime TEXT,
+      grid_mime TEXT,
+      hero_mime TEXT,
+      logo_mime TEXT,
+      icon_manual INTEGER NOT NULL DEFAULT 0,
+      grid_manual INTEGER NOT NULL DEFAULT 0,
+      hero_manual INTEGER NOT NULL DEFAULT 0,
+      logo_manual INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL
     );
 
@@ -74,6 +83,22 @@ function migrateSchema(database: Database.Database): void {
       value TEXT NOT NULL
     );
   `);
+
+  const coverCols = database
+    .prepare(`PRAGMA table_info(covers)`)
+    .all() as Array<{ name: string }>;
+  const have = new Set(coverCols.map((c) => c.name));
+  const addCol = (name: string, def: string) => {
+    if (!have.has(name)) {
+      database.exec(`ALTER TABLE covers ADD COLUMN ${name} ${def}`);
+      have.add(name);
+    }
+  };
+  addCol('logo', 'TEXT');
+  for (const slot of ['icon', 'grid', 'hero', 'logo'] as const) {
+    addCol(`${slot}_mime`, 'TEXT');
+    addCol(`${slot}_manual`, 'INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 function seedSyncState(database: Database.Database): void {
@@ -264,42 +289,209 @@ export function softDeleteAllCustomGames(): void {
     .run(now, now);
 }
 
-export function getCover(gameId: string): {
+export type ArtSlot = 'icon' | 'grid' | 'hero' | 'logo';
+
+export type CoverRow = {
   icon: string | null;
   grid: string | null;
   hero: string | null;
-} | null {
+  logo: string | null;
+  icon_mime: string | null;
+  grid_mime: string | null;
+  hero_mime: string | null;
+  logo_mime: string | null;
+  icon_manual: number;
+  grid_manual: number;
+  hero_manual: number;
+  logo_manual: number;
+};
+
+export function getCover(gameId: string): CoverRow | null {
   const row = getDb()
-    .prepare(`SELECT icon, grid, hero FROM covers WHERE game_id = ?`)
-    .get(gameId) as
-    | { icon: string | null; grid: string | null; hero: string | null }
-    | undefined;
+    .prepare(
+      `SELECT icon, grid, hero, logo,
+              icon_mime, grid_mime, hero_mime, logo_mime,
+              icon_manual, grid_manual, hero_manual, logo_manual
+       FROM covers WHERE game_id = ?`,
+    )
+    .get(gameId) as CoverRow | undefined;
   return row ?? null;
 }
 
+/** Auto-resolve write: never overwrite slots marked manual. */
 export function setCover(
   gameId: string,
-  art: { icon?: string; grid?: string; hero?: string },
+  art: {
+    icon?: string;
+    grid?: string;
+    hero?: string;
+    logo?: string;
+    iconMime?: string;
+    gridMime?: string;
+    heroMime?: string;
+    logoMime?: string;
+  },
 ): void {
+  const existing = getCover(gameId);
+  const pick = (
+    slot: ArtSlot,
+    next: string | undefined,
+    nextMime: string | undefined,
+  ): { url: string | null; mime: string | null } => {
+    const manualKey = `${slot}_manual` as keyof CoverRow;
+    const mimeKey = `${slot}_mime` as keyof CoverRow;
+    if (existing && Number(existing[manualKey]) === 1) {
+      return {
+        url: (existing[slot] as string | null) ?? null,
+        mime: (existing[mimeKey] as string | null) ?? null,
+      };
+    }
+    return {
+      url: next !== undefined ? next : ((existing?.[slot] as string | null) ?? null),
+      mime:
+        nextMime !== undefined
+          ? nextMime
+          : ((existing?.[mimeKey] as string | null) ?? null),
+    };
+  };
+
+  const icon = pick('icon', art.icon, art.iconMime);
+  const grid = pick('grid', art.grid, art.gridMime);
+  const hero = pick('hero', art.hero, art.heroMime);
+  const logo = pick('logo', art.logo, art.logoMime);
+
   getDb()
     .prepare(
       `
-      INSERT INTO covers (game_id, icon, grid, hero, updated_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO covers (
+        game_id, icon, grid, hero, logo,
+        icon_mime, grid_mime, hero_mime, logo_mime,
+        icon_manual, grid_manual, hero_manual, logo_manual,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(game_id) DO UPDATE SET
         icon = excluded.icon,
         grid = excluded.grid,
         hero = excluded.hero,
+        logo = excluded.logo,
+        icon_mime = excluded.icon_mime,
+        grid_mime = excluded.grid_mime,
+        hero_mime = excluded.hero_mime,
+        logo_mime = excluded.logo_mime,
         updated_at = excluded.updated_at
     `,
     )
     .run(
       gameId,
-      art.icon ?? null,
-      art.grid ?? null,
-      art.hero ?? null,
+      icon.url,
+      grid.url,
+      hero.url,
+      logo.url,
+      icon.mime,
+      grid.mime,
+      hero.mime,
+      logo.mime,
+      existing?.icon_manual ?? 0,
+      existing?.grid_manual ?? 0,
+      existing?.hero_manual ?? 0,
+      existing?.logo_manual ?? 0,
       Date.now(),
     );
+}
+
+export function setCoverManual(
+  gameId: string,
+  slot: ArtSlot,
+  url: string,
+  mime: string | null,
+): void {
+  const existing = getCover(gameId);
+  const next = {
+    icon: existing?.icon ?? null as string | null,
+    grid: existing?.grid ?? null as string | null,
+    hero: existing?.hero ?? null as string | null,
+    logo: existing?.logo ?? null as string | null,
+    icon_mime: existing?.icon_mime ?? null as string | null,
+    grid_mime: existing?.grid_mime ?? null as string | null,
+    hero_mime: existing?.hero_mime ?? null as string | null,
+    logo_mime: existing?.logo_mime ?? null as string | null,
+    icon_manual: existing?.icon_manual ?? 0,
+    grid_manual: existing?.grid_manual ?? 0,
+    hero_manual: existing?.hero_manual ?? 0,
+    logo_manual: existing?.logo_manual ?? 0,
+  };
+  if (slot === 'icon') {
+    next.icon = url;
+    next.icon_mime = mime;
+    next.icon_manual = 1;
+  } else if (slot === 'grid') {
+    next.grid = url;
+    next.grid_mime = mime;
+    next.grid_manual = 1;
+  } else if (slot === 'hero') {
+    next.hero = url;
+    next.hero_mime = mime;
+    next.hero_manual = 1;
+  } else {
+    next.logo = url;
+    next.logo_mime = mime;
+    next.logo_manual = 1;
+  }
+
+  getDb()
+    .prepare(
+      `
+      INSERT INTO covers (
+        game_id, icon, grid, hero, logo,
+        icon_mime, grid_mime, hero_mime, logo_mime,
+        icon_manual, grid_manual, hero_manual, logo_manual,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(game_id) DO UPDATE SET
+        icon = excluded.icon,
+        grid = excluded.grid,
+        hero = excluded.hero,
+        logo = excluded.logo,
+        icon_mime = excluded.icon_mime,
+        grid_mime = excluded.grid_mime,
+        hero_mime = excluded.hero_mime,
+        logo_mime = excluded.logo_mime,
+        icon_manual = excluded.icon_manual,
+        grid_manual = excluded.grid_manual,
+        hero_manual = excluded.hero_manual,
+        logo_manual = excluded.logo_manual,
+        updated_at = excluded.updated_at
+    `,
+    )
+    .run(
+      gameId,
+      next.icon,
+      next.grid,
+      next.hero,
+      next.logo,
+      next.icon_mime,
+      next.grid_mime,
+      next.hero_mime,
+      next.logo_mime,
+      next.icon_manual,
+      next.grid_manual,
+      next.hero_manual,
+      next.logo_manual,
+      Date.now(),
+    );
+}
+
+/** Drop manual lock for a slot so the next resolve can refill it. */
+export function clearCoverManual(gameId: string, slot: ArtSlot): void {
+  const existing = getCover(gameId);
+  if (!existing) return;
+  getDb()
+    .prepare(
+      `UPDATE covers SET ${slot}_manual = 0, ${slot} = NULL, ${slot}_mime = NULL, updated_at = ? WHERE game_id = ?`,
+    )
+    .run(Date.now(), gameId);
 }
 
 export function getAllPlaytimeSeconds(): Record<string, number> {

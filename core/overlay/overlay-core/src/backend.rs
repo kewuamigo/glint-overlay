@@ -11,9 +11,11 @@ use core::{mem, num::NonZeroU32};
 use std::collections::VecDeque;
 
 use anyhow::Context;
-use glint_overlay_common::cursor::Cursor;
-use glint_overlay_event::{GpuLuid, OverlayEvent, WindowEvent};
 use dashmap::mapref::multiple::RefMulti;
+use glint_overlay_common::cursor::Cursor;
+use glint_overlay_common::paint_cmd::PaintCmd;
+use glint_overlay_common::request::HotkeyChord;
+use glint_overlay_event::{GpuLuid, OverlayEvent, WindowEvent};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tracing::trace;
@@ -27,21 +29,28 @@ use windows::Win32::{
             KeyboardAndMouse::{GetCapture, ReleaseCapture, SetFocus},
         },
         WindowsAndMessaging::{
-            self as msg, ClipCursor, DefWindowProcA, GWLP_WNDPROC, GetClipCursor, GetSystemMetrics,
-            PostMessageA, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SetCursor, SetWindowLongPtrA,
-            ShowCursor, WNDPROC,
+            self as msg, ClipCursor, DefWindowProcA, GCLP_HCURSOR, GWLP_WNDPROC, GetClassLongPtrW,
+            GetClipCursor, GetCursor, GetSystemMetrics, HCURSOR, PostMessageA, SM_CXVIRTUALSCREEN,
+            SM_CYVIRTUALSCREEN, SetClassLongPtrW, SetCursor, SetWindowLongPtrA, ShowCursor,
+            WNDPROC,
         },
     },
 };
 
 use crate::{
     backend::{
-        render::RenderData,
-        window::{InputBlockData, ListenInputFlags, WindowProcData, cursor::load_cursor, input_ll},
+        render::{RenderData, apply_chrome_dest},
+        window::{
+            InputBlockData, ListenInputFlags, WindowProcData, class_cursor_to_restore,
+            clip_is_tighter, cursor::load_cursor, input_ll, restore_show_count, show_until_visible,
+            thread_hooks,
+        },
     },
     event_sink::OverlayEventSink,
+    hook::with_cursor_passthrough,
     interop::DxInterop,
     layout::OverlayLayout,
+    paint_cmd::{PaintAction, PaintInterpreter},
     types::IntDashMap,
     util::get_client_size,
 };
@@ -73,6 +82,7 @@ impl Backends {
         adapter_fn: impl FnOnce() -> Option<IDXGIAdapter>,
         f: impl FnOnce(&WindowBackend) -> R,
     ) -> anyhow::Result<R> {
+        crate::cef_frame::wait_for_cef_frame();
         if let Some(backend) = BACKENDS.map.get(&id) {
             return Ok(f(&backend));
         }
@@ -110,6 +120,7 @@ impl Backends {
                     proc: Mutex::new(WindowProcData::new()),
                     render: Mutex::new(RenderData::new(interop, window_size)),
                     proc_queue: Mutex::new(VecDeque::new()),
+                    paint: Mutex::new(PaintInterpreter::new()),
                 })
             })?
             .downgrade();
@@ -147,6 +158,7 @@ pub struct WindowBackend {
     #[doc(hidden)]
     pub render: Mutex<RenderData>,
     pub(crate) proc_queue: Mutex<VecDeque<ProcDispatchFn>>,
+    paint: Mutex<PaintInterpreter>,
 }
 
 impl WindowBackend {
@@ -158,6 +170,7 @@ impl WindowBackend {
         *self.layout.lock() = OverlayLayout::new();
         self.render.lock().reset();
         self.proc.lock().reset();
+        *self.paint.lock() = PaintInterpreter::new();
         self.block_input(false);
     }
 
@@ -167,6 +180,11 @@ impl WindowBackend {
     /// Otherwise, surface cannot be rendered.
     pub fn gpu_luid(&self) -> GpuLuid {
         self.render.lock().interop.gpu_id()
+    }
+
+    /// Independent scanout is off (Steam Present-blit padló).
+    pub fn independent_active(&self) -> bool {
+        crate::compositor::independent_active()
     }
 
     /// Update overlay surface using the given shared handle (layer 0).
@@ -200,6 +218,50 @@ impl WindowBackend {
     ) {
         self.render.lock().set_layer_input_rect(layer, rect);
         self.invalidate_layout();
+    }
+
+    /// Steam paint-cmd (existing proto). Opcode 17 still-draw is the present
+    /// mailbox path; this records the switch and applies cursor/chrome dest.
+    pub fn apply_paint_cmd(&self, cmd: &PaintCmd) {
+        let result = self.paint.lock().interpret(cmd, None);
+        match result.action {
+            PaintAction::None | PaintAction::SharedTex(_) => {}
+            PaintAction::SetBlockingCursor(cursor) => {
+                self.set_blocking_cursor(cursor);
+                self.apply_cursor_now(cursor);
+            }
+            PaintAction::ShowCursor { show } => {
+                if !show {
+                    self.set_blocking_cursor(None);
+                }
+                self.apply_show_cursor_now(show);
+            }
+            PaintAction::SetHotKey(chord) => self.set_hotkey(chord),
+            PaintAction::ImeCommand { inner } => self.set_ime_command(inner),
+            PaintAction::ChromeDest {
+                buffer_id, x, y, ..
+            } => {
+                // Layer 0 is OverlayLayout / shell. Opcode 29 must not pin it
+                // (`SetLayerPosition` on the cef pipe already rejects layer 0).
+                if apply_chrome_dest(&mut self.render.lock().layers, buffer_id as u32, x, y) {
+                    self.invalidate_layout();
+                }
+            }
+            PaintAction::DeleteChrome { buffer_id } => {
+                let layer = buffer_id as u32;
+                // Layer 0 is shell; cef PaintCmd must not unbind it.
+                if layer != 0 {
+                    if let Err(err) = self.update_layer(layer, None) {
+                        trace!("DeleteChrome buffer {buffer_id}: {err:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Opcode 17 is [`UpdateSharedHandle`] / [`UpdateLayerHandle`].
+    pub fn note_shared_tex_opcode_17(&self) {
+        self.apply_paint_cmd(&PaintCmd::DrawAndUpdateSharedTexture);
     }
 
     /// Get overlay layout.
@@ -244,7 +306,11 @@ impl WindowBackend {
                     y.resolve(window_size.1 as f32).round() as i32,
                 )
             } else {
-                render.layers.get(&key).map(|l| l.position).unwrap_or((0, 0))
+                render
+                    .layers
+                    .get(&key)
+                    .map(|l| l.position)
+                    .unwrap_or((0, 0))
             };
             if let Some(layer) = render.layers.get_mut(&key) {
                 layer.position = position;
@@ -270,6 +336,43 @@ impl WindowBackend {
         self.proc.lock().blocking_cursor = cursor;
     }
 
+    /// Same store `HotKeyAndVisibility` uses. Do not inject keys.
+    pub fn set_hotkey(&self, hotkey: HotkeyChord) {
+        self.proc.lock().hotkey = hotkey;
+    }
+
+    /// Record `k_EIMECommand` inner. Interactive already uses ImmAssociateContext /
+    /// `ImeState` / OverlayEventSink IME events — no new IMM32, no WM_KEY*.
+    pub fn set_ime_command(&self, inner: u32) {
+        self.proc.lock().last_ime = Some(inner);
+    }
+
+    fn apply_cursor_now(&self, cursor: Option<Cursor>) {
+        self.execute_gui(move |backend| {
+            if backend.proc.lock().blocking_state.is_none() {
+                return;
+            }
+            with_cursor_passthrough(|| unsafe {
+                SetCursor(
+                    cursor
+                        .and_then(load_cursor)
+                        .or_else(|| load_cursor(Cursor::Default)),
+                );
+            });
+        });
+    }
+
+    fn apply_show_cursor_now(&self, show: bool) {
+        self.execute_gui(move |backend| {
+            if backend.proc.lock().blocking_state.is_none() {
+                return;
+            }
+            with_cursor_passthrough(|| unsafe {
+                ShowCursor(show);
+            });
+        });
+    }
+
     /// Blocks or unblocks input for the window.
     ///
     /// The state change runs asynchronously on the window's GUI thread and the
@@ -291,16 +394,23 @@ impl WindowBackend {
                     (proc.position, proc.blocking_cursor)
                 };
 
-                ShowCursor(true);
-                // Always set a visible cursor shape.  blocking_cursor may be None
-                // if the renderer hasn't emitted a cursor-changed event yet (first
-                // open after Hidden mode), so fall back to the arrow cursor to
-                // prevent SetCursor(NULL) which would make the cursor invisible.
-                SetCursor(
-                    blocking_cursor
-                        .and_then(load_cursor)
-                        .or_else(|| load_cursor(Cursor::Default)),
-                );
+                let (show_count, saved_cursor) = with_cursor_passthrough(|| {
+                    let show_count = show_until_visible(|show| ShowCursor(show));
+                    let saved_cursor = GetCursor().0 as isize;
+                    // Always set a visible cursor shape.  blocking_cursor may be None
+                    // if the renderer hasn't emitted a cursor-changed event yet (first
+                    // open after Hidden mode), so fall back to the arrow cursor to
+                    // prevent SetCursor(NULL) which would make the cursor invisible.
+                    SetCursor(
+                        blocking_cursor
+                            .and_then(load_cursor)
+                            .or_else(|| load_cursor(Cursor::Default)),
+                    );
+                    (show_count, saved_cursor)
+                });
+                let hwnd = HWND(backend.id as _);
+                let class_cursor = GetClassLongPtrW(hwnd, GCLP_HCURSOR);
+                SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0);
                 let clip_cursor = {
                     let mut rect = RECT::default();
                     _ = GetClipCursor(&mut rect);
@@ -310,15 +420,23 @@ impl WindowBackend {
                         right: GetSystemMetrics(SM_CXVIRTUALSCREEN),
                         bottom: GetSystemMetrics(SM_CYVIRTUALSCREEN),
                     };
-                    _ = ClipCursor(None);
+                    if clip_is_tighter(rect, screen) {
+                        _ = ClipCursor(None);
+                    }
 
                     if rect != screen { Some(rect) } else { None }
                 };
 
-                let old_ime_cx =
-                    ImmAssociateContext(HWND(backend.id as _), ImmCreateContext()).0 as usize;
-
-                // give focus to target window
+                let old_ime_cx = with_cursor_passthrough(|| {
+                    ImmAssociateContext(HWND(backend.id as _), ImmCreateContext()).0 as usize
+                });
+                backend.proc.lock().blocking_state = Some(InputBlockData {
+                    clip_cursor,
+                    old_ime_cx,
+                    show_count,
+                    saved_cursor,
+                    class_cursor,
+                });
                 _ = SetFocus(Some(HWND(backend.id as _)));
 
                 // In case of ime is already enabled, hide composition windows
@@ -328,13 +446,10 @@ impl WindowBackend {
                     WPARAM(1),
                     LPARAM(0),
                 );
-                backend.proc.lock().blocking_state = Some(InputBlockData {
-                    clip_cursor,
-                    old_ime_cx,
-                });
 
                 input_ll::activate_route(backend.id, position);
                 input_ll::acquire();
+                thread_hooks::install(backend.id);
             });
         } else {
             self.execute_gui(|backend| unsafe {
@@ -346,14 +461,25 @@ impl WindowBackend {
                 let Some(data) = data else {
                     return;
                 };
+                thread_hooks::uninstall();
 
-                ShowCursor(false);
+                with_cursor_passthrough(|| {
+                    restore_show_count(data.show_count, |show| ShowCursor(show));
+                    SetCursor(Some(HCURSOR(data.saved_cursor as *mut _)));
+                });
+                if let Some(hcursor) = class_cursor_to_restore(data.class_cursor) {
+                    SetClassLongPtrW(HWND(backend.id as _), GCLP_HCURSOR, hcursor as isize);
+                }
                 if GetCapture().0 as u32 == backend.id {
-                    _ = ReleaseCapture();
+                    with_cursor_passthrough(|| {
+                        _ = ReleaseCapture();
+                    });
                 }
 
                 _ = ClipCursor(data.clip_cursor.as_ref().map(|r| r as _));
-                let ime_cx = ImmAssociateContext(HWND(backend.id as _), HIMC(data.old_ime_cx as _));
+                let ime_cx = with_cursor_passthrough(|| {
+                    ImmAssociateContext(HWND(backend.id as _), HIMC(data.old_ime_cx as _))
+                });
                 _ = ImmDestroyContext(ime_cx);
 
                 input_ll::deactivate_route(backend.id);

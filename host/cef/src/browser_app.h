@@ -63,6 +63,10 @@ class BrowserApp : public CefApp,
   void GoBack();
   void GoForward();
   void Reload();
+  /** Chrome-style satellite for extension options/popup — never converts content_. */
+  void OpenExtensionSatellite(const std::string& extension_id,
+                              gameoverlay::cef::ExtensionSatelliteKind kind);
+  void CloseExtensionSatellite();
   void ShutdownSession(bool quit_message_loop);
   /** `__goHost` bridge (host → page): settle one invoke / deliver one push. */
   void DeliverBridgeResult(uint32_t request_id, bool ok, const std::string& result_json,
@@ -81,16 +85,30 @@ class BrowserApp : public CefApp,
 
  private:
   void CreateBrowser(int w, int h, const std::string& url, bool hwnd_mode, HWND parent);
+  /** Product default: one shell CreateBrowser (AppShell + iframe page). */
+  void CreateShellOnlyOsr(int w, int h, const std::string& chrome_url);
+  /** Rollback dual OSR (`GLINT_CEF_DUAL_OSR=1`). */
   void CreateDualOsr(int w, int h, const std::string& chrome_url);
+  /** Legacy spike: one content windowless OSR only (no chrome_). */
+  void CreateContentOnlyOsr(int w, int h);
+  /** Env `GLINT_CEF_SPIKE_CHROME_SATELLITE=1`: one Chrome-style popup beside dual OSR. */
+  void MaybeSpawnChromeStyleSatelliteSpike();
+  /** Create/replace Chrome-style windowed satellite (nullptr ipc, OsrRole::Chrome). */
+  void OpenChromeStyleSatellite(const std::string& url);
+  void CloseChromeStyleSatellite();
   void LayoutContentHole();
   void ApplyInnerWindow();
   void PushWindowBoundsToUi();
   void SetSurfaceSize(int w, int h);
   void SetInnerWindow(int x, int y, int w, int h);
-  void OnOsrPaint(OsrRole role, HANDLE shared_handle, uint32_t w, uint32_t h);
-  void PublishComposite();
+  void OnOsrPaint(OsrRole role, HANDLE shared_handle, uint32_t w, uint32_t h,
+                  const SharedDirtyRect* dirty, size_t dirty_n);
+  void SendPaint(uint32_t layer, uint32_t w, uint32_t h, uint64_t nt_handle);
   void HandleChromeMessage(const std::string& json);
   void PushNavToChrome(const std::string& nav_json);
+  /** Shell-only: set `#glint-browser-content` iframe src + synthesize navState. */
+  void NavigateShellIframe(const std::string& url);
+  void ShellIframeHistory(const char* op);
   void FlushPendingContentNavigate();
   void FlushPendingFocus();
   /** Layout CEF child inside Electron parent (client coords). No TOPMOST chase. */
@@ -102,11 +120,14 @@ class BrowserApp : public CefApp,
 
   IpcClient* ipc_ = nullptr;
   SharedTexPublisher publisher_;
-  /** Dual-OSR (default): chrome UI + content page. */
+  /** Shell host document OSR (`file://` AppShell). Null on content-only spike. */
   CefRefPtr<OsrClient> chrome_;
+  /** Dual-OSR page peer only (`GLINT_CEF_DUAL_OSR`). Null on product shell-only. */
   CefRefPtr<OsrClient> content_;
   /** HWND / legacy single-client path. */
   CefRefPtr<OsrClient> client_;
+  /** Chrome-style satellite (not OSR; not content_; nullptr ipc). */
+  CefRefPtr<OsrClient> satellite_;
   bool created_ = false;
   bool hwnd_mode_ = false;
   /** Chrome OSR / publish texture size (game/fullscreen). */
@@ -123,7 +144,7 @@ class BrowserApp : public CefApp,
   int content_h_ = 0;
   /** True when host set an arbitrary shell React hole (not kChromeTopPx strip). */
   bool content_rect_override_ = false;
-  /** When true, skip content blit so chrome newtab UI stays visible. */
+  /** When true, skip content-layer paint so chrome newtab UI stays visible. */
   bool content_blank_ = true;
   /** content_navigate before content browser OnAfterCreated — never silent-drop. */
   std::string pending_content_url_;

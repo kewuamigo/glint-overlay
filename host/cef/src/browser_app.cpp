@@ -14,6 +14,8 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -22,8 +24,9 @@
 #endif
 #include <windows.h>
 #include <shlobj.h>
+#include <bcrypt.h>
 
-#include <string>
+#pragma comment(lib, "bcrypt.lib")
 
 namespace {
 
@@ -98,6 +101,137 @@ void KickOsr(CefRefPtr<OsrClient> client) {
   client->browser()->GetHost()->WasResized();
 }
 
+/** Chromium unpacked extension id = first 16 SHA-256 bytes → a-p alphabet. */
+std::string ChromiumExtensionIdFromPath(const std::wstring& abs_path) {
+  std::string lower;
+  lower.reserve(abs_path.size());
+  for (wchar_t ch : abs_path) {
+    if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+    if (ch <= 0x7f) lower.push_back(static_cast<char>(ch));
+    else {
+      // Non-ASCII: UTF-8 (AppData paths are usually ASCII).
+      wchar_t one[2] = {ch, 0};
+      char utf8[8] = {};
+      int n = WideCharToMultiByte(CP_UTF8, 0, one, 1, utf8, sizeof(utf8), nullptr,
+                                  nullptr);
+      for (int i = 0; i < n; ++i) lower.push_back(utf8[i]);
+    }
+  }
+  BCRYPT_ALG_HANDLE alg = nullptr;
+  BCRYPT_HASH_HANDLE hash = nullptr;
+  std::string out;
+  if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0)
+    return out;
+  if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0) {
+    BCryptHashData(hash, reinterpret_cast<PUCHAR>(lower.data()),
+                   static_cast<ULONG>(lower.size()), 0);
+    UCHAR digest[32] = {};
+    if (BCryptFinishHash(hash, digest, sizeof(digest), 0) == 0) {
+      out.reserve(32);
+      for (int i = 0; i < 16; ++i) {
+        out.push_back(static_cast<char>('a' + (digest[i] >> 4)));
+        out.push_back(static_cast<char>('a' + (digest[i] & 0xf)));
+      }
+    }
+    BCryptDestroyHash(hash);
+  }
+  BCryptCloseAlgorithmProvider(alg, 0);
+  return out;
+}
+
+bool EnvFlagEnabled(const wchar_t* name) {
+  wchar_t flag[8] = {};
+  const DWORD n = GetEnvironmentVariableW(name, flag, 8);
+  if (n == 0 || n >= 8) return false;
+  return flag[0] == L'1' || flag[0] == L'y' || flag[0] == L'Y';
+}
+
+bool SpikeChromeSatelliteEnabled() {
+  return EnvFlagEnabled(L"GLINT_CEF_SPIKE_CHROME_SATELLITE");
+}
+
+/** Legacy spike: create only content_ OSR (blanks Interactive shell). */
+bool SingleContentOsrEnabled() {
+  return EnvFlagEnabled(L"GLINT_CEF_SINGLE_CONTENT_OSR");
+}
+
+/** Opt-in ShellOnly+iframe. Product default is dual OSR — real sites send
+ *  X-Frame-Options / CSP frame-ancestors and will not load in a shell iframe. */
+bool ShellOnlyOsrEnabled() {
+  return EnvFlagEnabled(L"GLINT_CEF_SHELL_ONLY");
+}
+
+std::string SpikeOptionsUrlFromEnvOrPath() {
+  wchar_t override_url[1024] = {};
+  if (GetEnvironmentVariableW(L"GLINT_CEF_SPIKE_OPTIONS_URL", override_url,
+                              1024) > 0) {
+    char utf8[2048] = {};
+    WideCharToMultiByte(CP_UTF8, 0, override_url, -1, utf8, sizeof(utf8), nullptr,
+                        nullptr);
+    if (utf8[0]) return std::string(utf8);
+  }
+  wchar_t appdata[MAX_PATH] = {};
+  if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
+    return "about:blank";
+  }
+  const std::wstring dir =
+      std::wstring(appdata) + L"\\Glint\\BrowserExtensions\\glint-spike-options";
+  const std::string id = ChromiumExtensionIdFromPath(dir);
+  if (id.empty()) return "about:blank";
+  return "chrome-extension://" + id + "/options.html";
+}
+
+bool ExtensionIdSafe(const std::string& id) {
+  if (id.empty() || id.size() > 128) return false;
+  for (char c : id) {
+    if (c == '/' || c == '\\' || c == '.' || c == ':' || c == '\0') return false;
+  }
+  return true;
+}
+
+std::wstring Utf8ToWide(const std::string& utf8) {
+  if (utf8.empty()) return {};
+  int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+  if (n <= 1) return {};
+  std::wstring out(static_cast<size_t>(n - 1), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, out.data(), n);
+  return out;
+}
+
+/** Resolve chrome-extension:// URL for options/popup from sideloaded folder id. */
+std::string ResolveSatelliteUrl(const std::string& extension_id,
+                                gameoverlay::cef::ExtensionSatelliteKind kind) {
+  if (!ExtensionIdSafe(extension_id)) return {};
+  wchar_t appdata[MAX_PATH] = {};
+  if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
+    return {};
+  }
+  const std::wstring dir = std::wstring(appdata) + L"\\Glint\\BrowserExtensions\\" +
+                           Utf8ToWide(extension_id);
+  const std::wstring manifest_path = dir + L"\\manifest.json";
+  std::ifstream in(manifest_path);
+  if (!in) return {};
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  const std::string manifest = ss.str();
+  std::string page;
+  if (kind == gameoverlay::cef::EXTENSION_SATELLITE_KIND_OPTIONS) {
+    if (!JsonFindString(manifest, "page", &page) || page.empty()) return {};
+  } else if (kind == gameoverlay::cef::EXTENSION_SATELLITE_KIND_POPUP) {
+    if (!JsonFindString(manifest, "default_popup", &page) || page.empty()) return {};
+  } else {
+    return {};
+  }
+  // Reject path traversal in manifest page fields.
+  if (page.find("..") != std::string::npos || page.find(':') != std::string::npos) {
+    return {};
+  }
+  while (!page.empty() && (page[0] == '/' || page[0] == '\\')) page.erase(page.begin());
+  const std::string chrome_id = ChromiumExtensionIdFromPath(dir);
+  if (chrome_id.empty()) return {};
+  return "chrome-extension://" + chrome_id + "/" + page;
+}
+
 }  // namespace
 
 BrowserApp::BrowserApp() = default;
@@ -106,7 +240,6 @@ void BrowserApp::OnBeforeCommandLineProcessing(
     const CefString& /*process_type*/,
     CefRefPtr<CefCommandLine> command_line) {
   // Accelerated OSR (OnAcceleratedPaint + D3D shared texture).
-  command_line->AppendSwitch("enable-begin-frame-scheduling");
   command_line->AppendSwitchWithValue("use-angle", "d3d11");
   // GPU-native rendering — without this CEF falls back to software rasterization
   // per-texture, which adds latency per paint and makes scrolling clunky.
@@ -115,7 +248,7 @@ void BrowserApp::OnBeforeCommandLineProcessing(
   // Keep raster threads low: the game needs those cores. Uncapping the GPU
   // process (disable-gpu-vsync / disable-frame-rate-limit) submits unbounded
   // work that queues ahead of the game and makes hover feel *later*, not
-  // sooner — the overlay is paced by the game's Present, not by CEF.
+  // sooner.
   command_line->AppendSwitchWithValue("num-raster-threads", "2");
   // Overlay host runs elevated (ETW/injector). CEF 120+ auto-de-elevates and
   // CefInitialize fails (exit 1) unless we opt out.
@@ -123,29 +256,88 @@ void BrowserApp::OnBeforeCommandLineProcessing(
   // Chrome UI is file:// next to the helper — allow local script/css loads.
   command_line->AppendSwitch("allow-file-access-from-files");
   // Unpacked extensions from %APPDATA%\Glint\BrowserExtensions (same folder
-  // Electron used). This CEF build has no RequestContext::LoadExtension.
+  // Electron used). Chromium --load-extension only — this CEF build has no
+  // RequestContext::LoadExtension (removed M128; never call it).
+  // Prefs: %APPDATA%\Glint\browser-extensions.json — `{ "<id>": false }` omits
+  // that folder from --load-extension (host `browser.extensions.setEnabled`).
   {
     wchar_t appdata[MAX_PATH] = {};
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
-      std::wstring root = std::wstring(appdata) + L"\\Glint\\BrowserExtensions";
+      const std::wstring glint = std::wstring(appdata) + L"\\Glint";
+      std::wstring root = glint + L"\\BrowserExtensions";
+      std::string prefs_json;
+      {
+        const std::wstring prefs_path = glint + L"\\browser-extensions.json";
+        std::ifstream in(prefs_path);
+        if (in) {
+          std::ostringstream ss;
+          ss << in.rdbuf();
+          prefs_json = ss.str();
+        }
+      }
+      auto folder_utf8 = [](const wchar_t* name) -> std::string {
+        if (!name || !*name) return {};
+        int n = WideCharToMultiByte(CP_UTF8, 0, name, -1, nullptr, 0, nullptr,
+                                    nullptr);
+        if (n <= 1) return {};
+        std::string out(static_cast<size_t>(n - 1), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, name, -1, out.data(), n, nullptr,
+                            nullptr);
+        return out;
+      };
       WIN32_FIND_DATAW fd{};
       HANDLE find = FindFirstFileW((root + L"\\*").c_str(), &fd);
-      if (find != INVALID_HANDLE_VALUE) {
+      if (find == INVALID_HANDLE_VALUE) {
+        std::fprintf(stderr, "cef: BrowserExtensions missing or empty (%ls)\n",
+                     root.c_str());
+      } else {
         std::wstring list;
+        int accepted = 0;
+        int skipped = 0;
+        int disabled = 0;
         do {
           if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
           if (fd.cFileName[0] == L'.') continue;
           std::wstring dir = root + L"\\" + fd.cFileName;
-          if (GetFileAttributesW((dir + L"\\manifest.json").c_str()) == INVALID_FILE_ATTRIBUTES) {
+          const std::wstring manifest = dir + L"\\manifest.json";
+          const DWORD man_attr = GetFileAttributesW(manifest.c_str());
+          if (man_attr == INVALID_FILE_ATTRIBUTES ||
+              (man_attr & FILE_ATTRIBUTE_DIRECTORY)) {
+            ++skipped;
+            std::fprintf(stderr,
+                         "cef: BrowserExtensions skip (no manifest.json file): %ls\n",
+                         fd.cFileName);
             continue;
+          }
+          if (!prefs_json.empty()) {
+            const std::string id = folder_utf8(fd.cFileName);
+            bool enabled = true;
+            if (!id.empty() && JsonFindBool(prefs_json, id.c_str(), &enabled) &&
+                !enabled) {
+              ++disabled;
+              std::fprintf(stderr,
+                           "cef: BrowserExtensions skip (disabled in prefs): %ls\n",
+                           fd.cFileName);
+              continue;
+            }
           }
           if (!list.empty()) list.push_back(L',');
           list += dir;
+          ++accepted;
+          std::fprintf(stderr, "cef: BrowserExtensions load: %ls\n", dir.c_str());
         } while (FindNextFileW(find, &fd));
         FindClose(find);
         if (!list.empty()) {
           command_line->AppendSwitchWithValue("load-extension", CefString(list));
-          std::fprintf(stderr, "cef: load-extension from BrowserExtensions\n");
+          std::fprintf(stderr,
+                       "cef: load-extension accepted=%d skipped=%d disabled=%d "
+                       "list=%ls\n",
+                       accepted, skipped, disabled, list.c_str());
+        } else {
+          std::fprintf(stderr,
+                       "cef: BrowserExtensions: no valid unpacked dirs "
+                       "(accepted=0 skipped=%d disabled=%d)\n",
+                       skipped, disabled);
         }
       }
     }
@@ -248,7 +440,8 @@ void BrowserApp::ApplySetFocus(bool focus, gameoverlay::cef::FocusTarget target)
   if (hwnd_mode_) {
     t = client_;
   } else if (target == gameoverlay::cef::FOCUS_TARGET_CONTENT) {
-    t = content_;
+    // Shell-only: page is an iframe inside chrome_ — same OsrClient.
+    t = content_ ? content_ : chrome_;
   } else {
     t = chrome_;
   }
@@ -256,7 +449,11 @@ void BrowserApp::ApplySetFocus(bool focus, gameoverlay::cef::FocusTarget target)
     // The host focuses chrome right after CreateSession, long before
     // OnAfterCreated — dropping it leaves the shell with no focused frame and
     // no later SetFocus (focus only re-sends when the hover target changes).
+    // Single-content spike has no chrome_ — chrome focus is a no-op (not pending).
     if (!hwnd_mode_) {
+      if (target != gameoverlay::cef::FOCUS_TARGET_CONTENT && !chrome_) {
+        return;
+      }
       pending_focus_ = focus;
       pending_focus_target_ = target;
     }
@@ -264,6 +461,13 @@ void BrowserApp::ApplySetFocus(bool focus, gameoverlay::cef::FocusTarget target)
   }
   auto host = t->browser()->GetHost();
   host->SetFocus(focus);
+  if (!hwnd_mode_ && focus && target == gameoverlay::cef::FOCUS_TARGET_CONTENT &&
+      !content_ && chrome_) {
+    chrome_->browser()->GetMainFrame()->ExecuteJavaScript(
+        "(function(){var f=document.getElementById('glint-browser-content');"
+        "if(f)try{f.focus();}catch(e){}})();",
+        "", 0);
+  }
   if (hwnd_mode_) {
     HWND hwnd_target = host->GetWindowHandle();
     if (!hwnd_target) hwnd_target = parent_hwnd_;
@@ -282,16 +486,19 @@ void BrowserApp::ApplySetHidden(bool hidden) {
 void BrowserApp::GoBack() {
   if (content_ && content_->browser()) content_->browser()->GoBack();
   else if (client_ && client_->browser()) client_->browser()->GoBack();
+  else ShellIframeHistory("back");
 }
 
 void BrowserApp::GoForward() {
   if (content_ && content_->browser()) content_->browser()->GoForward();
   else if (client_ && client_->browser()) client_->browser()->GoForward();
+  else ShellIframeHistory("forward");
 }
 
 void BrowserApp::Reload() {
   if (content_ && content_->browser()) content_->browser()->Reload();
   else if (client_ && client_->browser()) client_->browser()->Reload();
+  else ShellIframeHistory("reload");
 }
 
 void BrowserApp::ShutdownSession(bool quit_message_loop) {
@@ -301,7 +508,10 @@ void BrowserApp::ShutdownSession(bool quit_message_loop) {
 
 CefRefPtr<OsrClient> BrowserApp::ClientForFocusTarget(
     gameoverlay::cef::FocusTarget target) {
-  if (target == gameoverlay::cef::FOCUS_TARGET_CONTENT) return content_;
+  if (target == gameoverlay::cef::FOCUS_TARGET_CONTENT) {
+    if (content_) return content_;
+    return chrome_;  // shell-only iframe
+  }
   return chrome_;
 }
 
@@ -370,21 +580,28 @@ void BrowserApp::ApplySetContentRect(bool clear, int x, int y, int w, int h) {
     LayoutContentHole();
     // Clearing the hole — treat as blank until the next real navigate paints.
     content_blank_ = true;
-    PublishComposite();
     return;
   }
+  const int nw = w > 0 ? w : 1;
+  const int nh = h > 0 ? h : 1;
+  // Dest-only move: same size → update origin only. Host relocates the stamp;
+  // WasResized/Invalidate would flash the content layer on every window drag.
+  const bool size_changed =
+      !content_rect_override_ || content_w_ != nw || content_h_ != nh;
   content_rect_override_ = true;
   content_blank_ = false;
   content_x_ = x;
   content_y_ = y;
-  content_w_ = w > 0 ? w : 1;
-  content_h_ = h > 0 ? h : 1;
+  if (!size_changed) {
+    return;
+  }
+  content_w_ = nw;
+  content_h_ = nh;
   if (content_) content_->SetSize(content_w_, content_h_);
   if (content_ && content_->browser()) {
     content_->browser()->GetHost()->WasResized();
     content_->browser()->GetHost()->Invalidate(PET_VIEW);
   }
-  PublishComposite();
 }
 
 void BrowserApp::PushWindowBoundsToUi() {
@@ -418,10 +635,26 @@ void BrowserApp::ApplyInnerWindow() {
 void BrowserApp::SetSurfaceSize(int w, int h) {
   chrome_w_ = w > 0 ? w : 1;
   chrome_h_ = h > 0 ? h : 1;
-  if (chrome_) chrome_->SetSize(chrome_w_, chrome_h_);
-  // Inner window unchanged; chrome must repaint fullscreen transparent root.
-  if (chrome_ && chrome_->browser()) {
-    chrome_->browser()->GetHost()->Invalidate(PET_VIEW);
+  if (chrome_) {
+    chrome_->SetSize(chrome_w_, chrome_h_);
+    // Inner window unchanged; chrome must repaint fullscreen transparent root.
+    if (chrome_->browser()) {
+      chrome_->browser()->GetHost()->Invalidate(PET_VIEW);
+    }
+    return;
+  }
+  // Content-only spike: override makes LayoutContentHole early-return without
+  // resizing — keep content_ full-bleed to the new surface.
+  if (!content_) return;
+  content_x_ = 0;
+  content_y_ = 0;
+  content_w_ = chrome_w_;
+  content_h_ = chrome_h_;
+  content_rect_override_ = true;
+  content_->SetSize(content_w_, content_h_);
+  if (content_->browser()) {
+    content_->browser()->GetHost()->WasResized();
+    content_->browser()->GetHost()->Invalidate(PET_VIEW);
   }
 }
 
@@ -433,6 +666,148 @@ void BrowserApp::SetInnerWindow(int x, int y, int w, int h) {
   ApplyInnerWindow();
 }
 
+void BrowserApp::CreateShellOnlyOsr(int w, int h, const std::string& chrome_url) {
+  chrome_url_ = chrome_url;
+  chrome_w_ = w > 0 ? w : 1;
+  chrome_h_ = h > 0 ? h : 1;
+  window_x_ = 0;
+  window_y_ = 0;
+  window_w_ = chrome_w_;
+  window_h_ = chrome_h_;
+  content_ = nullptr;
+  content_rect_override_ = false;
+  content_blank_ = true;
+
+  auto paint = [this](OsrRole role, HANDLE handle, uint32_t pw, uint32_t ph,
+                      const SharedDirtyRect* dirty, size_t dirty_n) {
+    OnOsrPaint(role, handle, pw, ph, dirty, dirty_n);
+  };
+  auto chrome_msg = [this](const std::string& body) { HandleChromeMessage(body); };
+
+  chrome_ = new OsrClient(ipc_, OsrRole::Chrome);
+  chrome_->SetWindowed(false);
+  chrome_->SetSize(chrome_w_, chrome_h_);
+  chrome_->SetPaintHandler(paint);
+  chrome_->SetChromeMessageHandler(chrome_msg);
+  chrome_->SetAfterCreatedHandler([this]() {
+    PushWindowBoundsToUi();
+    FlushPendingContentNavigate();
+    FlushPendingFocus();
+  });
+  chrome_->SetLoadEndHandler([this]() {
+    PushWindowBoundsToUi();
+    FlushPendingContentNavigate();
+  });
+
+  CefBrowserSettings chrome_settings;
+  chrome_settings.background_color = CefColorSetARGB(0, 0, 0, 0);
+  chrome_settings.windowless_frame_rate = 60;
+
+  DestroyOwnedHost();
+  owned_host_ = CreateMessageOnlyHwnd();
+  if (!owned_host_) {
+    std::fprintf(stderr, "cef: HWND_MESSAGE owner missing — refusing CreateShellOnlyOsr\n");
+    chrome_ = nullptr;
+    created_ = false;
+    if (ipc_) {
+      SendPaintError("HWND_MESSAGE owner create failed");
+    }
+    return;
+  }
+
+  {
+    CefWindowInfo wi;
+    wi.SetAsWindowless(owned_host_);
+    wi.shared_texture_enabled = TRUE;
+    CefBrowserHost::CreateBrowser(wi, chrome_, chrome_url, chrome_settings, nullptr,
+                                  nullptr);
+  }
+
+  created_ = true;
+  std::fprintf(stderr,
+               "cef: CreateShellOnlyOsr %dx%d — one shell CreateBrowser; page via iframe\n",
+               chrome_w_, chrome_h_);
+  CefPostDelayedTask(TID_UI,
+                     base::BindOnce([](CefRefPtr<OsrClient> c) { KickOsr(c); }, chrome_),
+                     50);
+  CefPostDelayedTask(
+      TID_UI,
+      base::BindOnce([](CefRefPtr<BrowserApp> self) { self->PushWindowBoundsToUi(); },
+                     CefRefPtr<BrowserApp>(this)),
+      200);
+
+  MaybeSpawnChromeStyleSatelliteSpike();
+}
+
+void BrowserApp::CreateContentOnlyOsr(int w, int h) {
+  chrome_ = nullptr;
+  chrome_url_.clear();
+  chrome_w_ = w > 0 ? w : 1;
+  chrome_h_ = h > 0 ? h : 1;
+  window_x_ = 0;
+  window_y_ = 0;
+  window_w_ = chrome_w_;
+  window_h_ = chrome_h_;
+
+  auto paint = [this](OsrRole role, HANDLE handle, uint32_t pw, uint32_t ph,
+                      const SharedDirtyRect* dirty, size_t dirty_n) {
+    OnOsrPaint(role, handle, pw, ph, dirty, dirty_n);
+  };
+  // Nav still updates content_blank_; JS mirror is a no-op without chrome_.
+  auto nav = [this](const std::string& body) { PushNavToChrome(body); };
+
+  content_ = new OsrClient(ipc_, OsrRole::Content);
+  content_->SetWindowed(false);
+  // Full-surface content until shell reports a hole via set_content_rect.
+  content_rect_override_ = true;
+  content_x_ = 0;
+  content_y_ = 0;
+  content_w_ = chrome_w_;
+  content_h_ = chrome_h_;
+  content_->SetSize(content_w_, content_h_);
+  content_->SetPaintHandler(paint);
+  content_->SetNavStateHandler(nav);
+  content_->SetAfterCreatedHandler([this]() {
+    FlushPendingContentNavigate();
+    FlushPendingFocus();
+  });
+
+  CefBrowserSettings content_settings;
+  content_settings.background_color = CefColorSetARGB(255, 10, 12, 18);
+  content_settings.windowless_frame_rate = 60;
+
+  DestroyOwnedHost();
+  owned_host_ = CreateMessageOnlyHwnd();
+  if (!owned_host_) {
+    std::fprintf(stderr,
+                 "cef: HWND_MESSAGE owner missing — refusing CreateContentOnlyOsr\n");
+    content_ = nullptr;
+    created_ = false;
+    if (ipc_) {
+      SendPaintError("HWND_MESSAGE owner create failed");
+    }
+    return;
+  }
+
+  {
+    CefWindowInfo wi;
+    wi.SetAsWindowless(owned_host_);
+    wi.shared_texture_enabled = TRUE;
+    CefBrowserHost::CreateBrowser(wi, content_, "about:blank", content_settings, nullptr,
+                                  nullptr);
+  }
+
+  created_ = true;
+  std::fprintf(stderr,
+               "cef: CreateContentOnlyOsr %dx%d (GLINT_CEF_SINGLE_CONTENT_OSR) — "
+               "one content CreateBrowser; no chrome_ OSR\n",
+               chrome_w_, chrome_h_);
+  CefPostDelayedTask(TID_UI,
+                     base::BindOnce([](CefRefPtr<OsrClient> c) { KickOsr(c); }, content_),
+                     50);
+  MaybeSpawnChromeStyleSatelliteSpike();
+}
+
 void BrowserApp::CreateDualOsr(int w, int h, const std::string& chrome_url) {
   chrome_url_ = chrome_url;
   chrome_w_ = w > 0 ? w : 1;
@@ -442,8 +817,9 @@ void BrowserApp::CreateDualOsr(int w, int h, const std::string& chrome_url) {
   window_w_ = chrome_w_;
   window_h_ = chrome_h_;
 
-  auto paint = [this](OsrRole role, HANDLE handle, uint32_t pw, uint32_t ph) {
-    OnOsrPaint(role, handle, pw, ph);
+  auto paint = [this](OsrRole role, HANDLE handle, uint32_t pw, uint32_t ph,
+                      const SharedDirtyRect* dirty, size_t dirty_n) {
+    OnOsrPaint(role, handle, pw, ph, dirty, dirty_n);
   };
   auto chrome_msg = [this](const std::string& body) { HandleChromeMessage(body); };
   auto nav = [this](const std::string& body) { PushNavToChrome(body); };
@@ -522,6 +898,98 @@ void BrowserApp::CreateDualOsr(int w, int h, const std::string& chrome_url) {
       base::BindOnce([](CefRefPtr<BrowserApp> self) { self->PushWindowBoundsToUi(); },
                      CefRefPtr<BrowserApp>(this)),
       200);
+
+  MaybeSpawnChromeStyleSatelliteSpike();
+}
+
+void BrowserApp::MaybeSpawnChromeStyleSatelliteSpike() {
+  if (!SpikeChromeSatelliteEnabled()) return;
+  if (hwnd_mode_) {
+    std::fprintf(stderr, "cef: spike satellite skipped (hwnd_mode session)\n");
+    return;
+  }
+  const std::string url = SpikeOptionsUrlFromEnvOrPath();
+  std::fprintf(stderr,
+               "cef: spike Chrome-style satellite (desktop popup) url=%s\n",
+               url.c_str());
+  OpenChromeStyleSatellite(url);
+}
+
+void BrowserApp::OpenExtensionSatellite(
+    const std::string& extension_id,
+    gameoverlay::cef::ExtensionSatelliteKind kind) {
+  // Fail closed: never touch chrome_/content_ / clear layers on bad args.
+  if (hwnd_mode_) {
+    std::fprintf(stderr, "cef: open satellite skipped (hwnd_mode session)\n");
+    return;
+  }
+  if (!created_ || (!content_ && !chrome_)) {
+    std::fprintf(stderr, "cef: open satellite skipped (no OSR session)\n");
+    return;
+  }
+  const std::string url = ResolveSatelliteUrl(extension_id, kind);
+  if (url.empty()) {
+    std::fprintf(stderr,
+                 "cef: open satellite failed (resolve) id=%s kind=%d — OSR unchanged\n",
+                 extension_id.c_str(), static_cast<int>(kind));
+    return;
+  }
+  std::fprintf(stderr, "cef: open Chrome-style satellite id=%s kind=%d url=%s\n",
+               extension_id.c_str(), static_cast<int>(kind), url.c_str());
+  OpenChromeStyleSatellite(url);
+}
+
+void BrowserApp::CloseExtensionSatellite() { CloseChromeStyleSatellite(); }
+
+void BrowserApp::CloseChromeStyleSatellite() {
+  if (satellite_ && satellite_->browser()) {
+    satellite_->browser()->GetHost()->CloseBrowser(true);
+  }
+  satellite_ = nullptr;
+}
+
+void BrowserApp::OpenChromeStyleSatellite(const std::string& url) {
+  // Replace prior satellite only — never convert content_ to Chrome-style.
+  CloseChromeStyleSatellite();
+
+  // Not Content + host ipc_: that would EmitNavState and poison overlay nav.
+  satellite_ = new OsrClient(nullptr, OsrRole::Chrome);
+  satellite_->SetWindowed(true);
+  satellite_->SetSize(900, 700);
+  satellite_->SetAfterCreatedHandler([this]() {
+    if (!satellite_ || !satellite_->browser()) return;
+    auto host = satellite_->browser()->GetHost();
+    HWND hwnd = host->GetWindowHandle();
+    // OsrClient hides windowed children by default; satellite must be visible.
+    if (hwnd && IsWindow(hwnd)) {
+      ShowWindow(hwnd, SW_SHOW);
+    }
+    const cef_runtime_style_t style = host->GetRuntimeStyle();
+    std::fprintf(stderr,
+                 "cef: satellite after_created hwnd=%p runtime_style=%d "
+                 "(CHROME=%d ALLOY=%d DEFAULT=%d)\n",
+                 hwnd, static_cast<int>(style),
+                 static_cast<int>(CEF_RUNTIME_STYLE_CHROME),
+                 static_cast<int>(CEF_RUNTIME_STYLE_ALLOY),
+                 static_cast<int>(CEF_RUNTIME_STYLE_DEFAULT));
+  });
+
+  CefWindowInfo wi;
+  // Desktop top-level — do NOT parent to game HWND / OSR message-only host.
+  wi.SetAsPopup(nullptr, "Glint extension satellite");
+  wi.bounds = CefRect(80, 80, 900, 700);
+  wi.runtime_style = CEF_RUNTIME_STYLE_CHROME;
+
+  CefBrowserSettings settings;
+  settings.background_color = CefColorSetARGB(255, 255, 255, 255);
+
+  // CreateBrowser failure must not ShutdownBrowser / wipe dual OSR.
+  if (!CefBrowserHost::CreateBrowser(wi, satellite_, url, settings, nullptr,
+                                     nullptr)) {
+    std::fprintf(stderr,
+                 "cef: CreateBrowser satellite failed — OSR unchanged\n");
+    satellite_ = nullptr;
+  }
 }
 
 void BrowserApp::CreateBrowser(int w, int h, const std::string& url, bool hwnd_mode,
@@ -531,10 +999,11 @@ void BrowserApp::CreateBrowser(int w, int h, const std::string& url, bool hwnd_m
   }
 
   if (created_) {
-    if (hwnd_mode_ == hwnd_mode && !hwnd_mode && chrome_ && content_) {
+    // Shell-only (chrome_), dual (chrome_+content_), or content-only spike.
+    if (hwnd_mode_ == hwnd_mode && !hwnd_mode && (chrome_ || content_)) {
       SetSurfaceSize(w, h);
       SetInnerWindow(0, 0, w, h);
-      // file: → chrome UI; https/etc → content. Never LoadURL https into chrome.
+      // file: → chrome UI; https/etc → content/iframe. Never LoadURL https into chrome.
       if (url.rfind("file:", 0) == 0) Navigate(url);
       else ContentNavigate(url);
       return;
@@ -556,6 +1025,17 @@ void BrowserApp::CreateBrowser(int w, int h, const std::string& url, bool hwnd_m
   hwnd_mode_ = hwnd_mode;
 
   if (!hwnd_mode) {
+    if (SingleContentOsrEnabled()) {
+      CreateContentOnlyOsr(w, h);
+      if (url.rfind("file:", 0) != 0) ContentNavigate(url);
+      return;
+    }
+    // Product default: dual OSR (shell React + content page). Shell-only iframe
+    // is opt-in — most sites refuse framing (XFO / CSP).
+    if (ShellOnlyOsrEnabled()) {
+      CreateShellOnlyOsr(w, h, url);
+      return;
+    }
     CreateDualOsr(w, h, url);
     return;
   }
@@ -581,30 +1061,33 @@ void BrowserApp::CreateBrowser(int w, int h, const std::string& url, bool hwnd_m
   created_ = true;
 }
 
-void BrowserApp::OnOsrPaint(OsrRole role, HANDLE shared_handle, uint32_t w, uint32_t h) {
+void BrowserApp::OnOsrPaint(OsrRole role, HANDLE shared_handle, uint32_t w, uint32_t h,
+                            const SharedDirtyRect* dirty, size_t dirty_n) {
   const int layer = (role == OsrRole::Chrome) ? 0 : 1;
-  if (!publisher_.CacheLayer(layer, shared_handle, w, h)) {
+  if (layer == 1 && content_blank_) return;
+  if (!publisher_.CacheLayer(layer, shared_handle, w, h, dirty, dirty_n)) {
     SendPaintError("CacheLayer failed");
     return;
   }
-  PublishComposite();
-}
-
-void BrowserApp::PublishComposite() {
-  if (!ipc_ || !publisher_.has_chrome()) return;
   uint64_t remote = 0;
-  if (!publisher_.PublishComposite(window_x_, window_y_, window_w_, window_h_, content_x_,
-                                   content_y_, !content_blank_, &remote)) {
-    SendPaintError("PublishComposite failed");
+  if (!publisher_.PublishLayer(layer, &remote)) {
+    SendPaintError("PublishLayer failed");
     return;
   }
+  SendPaint(static_cast<uint32_t>(layer), publisher_.layer_w(layer), publisher_.layer_h(layer),
+            remote);
+}
+
+void BrowserApp::SendPaint(uint32_t layer, uint32_t w, uint32_t h, uint64_t nt_handle) {
+  if (!ipc_) return;
   gameoverlay::cef::Envelope env;
   env.set_protocol_version(gameoverlay::cef::PROTOCOL_VERSION_1);
   auto* paint = env.mutable_paint();
-  paint->set_width(publisher_.chrome_w());
-  paint->set_height(publisher_.chrome_h());
-  paint->set_nt_handle(remote);
+  paint->set_width(w);
+  paint->set_height(h);
+  paint->set_nt_handle(nt_handle);
   paint->set_layout_generation(layout_generation_);
+  paint->set_layer(layer);
   ipc_->SendProto(env);
 }
 
@@ -616,15 +1099,15 @@ void BrowserApp::HandleChromeMessage(const std::string& json) {
     return;
   }
   if (op == "go_back") {
-    if (content_ && content_->browser()) content_->browser()->GoBack();
+    GoBack();
     return;
   }
   if (op == "go_forward") {
-    if (content_ && content_->browser()) content_->browser()->GoForward();
+    GoForward();
     return;
   }
   if (op == "reload") {
-    if (content_ && content_->browser()) content_->browser()->Reload();
+    Reload();
     return;
   }
   if (op == "host_invoke") {
@@ -686,8 +1169,7 @@ void BrowserApp::DeliverBridgePush(const std::string& message_json) {
 }
 
 void BrowserApp::PushNavToChrome(const std::string& nav_json) {
-  if (!chrome_ || !chrome_->browser()) return;
-  // Apply content navState into chrome UI: window.__goApplyNavState(obj)
+  // Always track blank for content-layer paint gating (single- or dual-OSR).
   std::string url, title;
   JsonFindString(nav_json, "url", &url);
   JsonFindString(nav_json, "title", &title);
@@ -696,8 +1178,9 @@ void BrowserApp::PushNavToChrome(const std::string& nav_json) {
   JsonFindBool(nav_json, "canGoBack", &can_back);
   JsonFindBool(nav_json, "canGoForward", &can_fwd);
   content_blank_ = url.empty() || url == "about:blank";
-  if (content_blank_) PublishComposite();
 
+  if (!chrome_ || !chrome_->browser()) return;
+  // Apply content navState into chrome UI: window.__goApplyNavState(obj)
   char script[2048];
   std::snprintf(
       script, sizeof(script),
@@ -708,21 +1191,72 @@ void BrowserApp::PushNavToChrome(const std::string& nav_json) {
   chrome_->browser()->GetMainFrame()->ExecuteJavaScript(script, "", 0);
 }
 
+void BrowserApp::NavigateShellIframe(const std::string& url) {
+  if (!chrome_ || !chrome_->browser()) return;
+  const std::string esc = JsonEscape(url);
+  // Page pixels live in React `#glint-browser-content` (shell document).
+  // Retry briefly if the browser panel has not mounted the iframe yet.
+  char script[4096];
+  std::snprintf(
+      script, sizeof(script),
+      "(function(u){var n=0;function apply(){var f=document.getElementById("
+      "'glint-browser-content');if(!f){if(n++<40)setTimeout(apply,50);return;}"
+      "f.src=u;window.__goApplyNavState&&window.__goApplyNavState({url:u,title:\"\","
+      "loading:false,canGoBack:true,canGoForward:false});}apply();})(\"%s\");",
+      esc.c_str());
+  chrome_->browser()->GetMainFrame()->ExecuteJavaScript(script, "", 0);
+}
+
+void BrowserApp::ShellIframeHistory(const char* op) {
+  if (!chrome_ || !chrome_->browser() || !op) return;
+  const char* call = "reload";
+  if (std::strcmp(op, "back") == 0) {
+    call = "back";
+  } else if (std::strcmp(op, "forward") == 0) {
+    call = "forward";
+  }
+  char script[512];
+  if (std::strcmp(call, "reload") == 0) {
+    std::snprintf(
+        script, sizeof(script),
+        "(function(){var f=document.getElementById('glint-browser-content');"
+        "if(!f)return;try{f.contentWindow.location.reload();}catch(e){"
+        "if(f.src)f.src=f.src;}})();");
+  } else {
+    std::snprintf(
+        script, sizeof(script),
+        "(function(){var f=document.getElementById('glint-browser-content');"
+        "if(!f||!f.contentWindow)return;try{f.contentWindow.history.%s();}catch(e){}})();",
+        call);
+  }
+  chrome_->browser()->GetMainFrame()->ExecuteJavaScript(script, "", 0);
+}
+
 void BrowserApp::ContentNavigate(const std::string& url) {
   content_blank_ = url.empty() || url == "about:blank";
-  if (!content_ || !content_->browser()) {
-    pending_content_url_ = url;
+  if (content_ && content_->browser()) {
+    pending_content_url_.clear();
+    content_->browser()->GetMainFrame()->LoadURL(url);
     return;
   }
-  pending_content_url_.clear();
-  content_->browser()->GetMainFrame()->LoadURL(url);
-  if (content_blank_) PublishComposite();
+  // Product shell-only (or dual before content OnAfterCreated): iframe path.
+  if (chrome_ && chrome_->browser()) {
+    pending_content_url_.clear();
+    NavigateShellIframe(url);
+    return;
+  }
+  pending_content_url_ = url;
 }
 
 void BrowserApp::FlushPendingFocus() {
   if (pending_focus_target_ == gameoverlay::cef::FOCUS_TARGET_UNSPECIFIED) return;
   CefRefPtr<OsrClient> t = ClientForFocusTarget(pending_focus_target_);
-  if (!t || !t->browser()) return;
+  if (!t || !t->browser()) {
+    if (pending_focus_target_ != gameoverlay::cef::FOCUS_TARGET_CONTENT && !chrome_) {
+      pending_focus_target_ = gameoverlay::cef::FOCUS_TARGET_UNSPECIFIED;
+    }
+    return;
+  }
   const gameoverlay::cef::FocusTarget target = pending_focus_target_;
   pending_focus_target_ = gameoverlay::cef::FOCUS_TARGET_UNSPECIFIED;
   ApplySetFocus(pending_focus_, target);
@@ -741,7 +1275,13 @@ void BrowserApp::Navigate(const std::string& url) {
     client_->browser()->GetMainFrame()->LoadURL(url);
     return;
   }
-  // OSR: navigate = chrome UI main frame only (never content https).
+  // Shell-only / dual: chrome LoadURL is file: shell only. Pages → content or iframe.
+  // Misrouted Navigate must never wipe React chrome with youtube.com etc.
+  // Single-content spike: no chrome_ — file: is a no-op; pages → content.
+  if (url.rfind("file:", 0) != 0) {
+    ContentNavigate(url);
+    return;
+  }
   if (!chrome_ || !chrome_->browser()) return;
   // Invalidate cache — remounted #app must get left/top/width/height again.
   last_js_x_ = last_js_y_ = INT_MIN;
@@ -832,6 +1372,7 @@ void BrowserApp::ShutdownBrowser() {
   if (content_ && content_->browser()) {
     content_->browser()->GetHost()->CloseBrowser(true);
   }
+  CloseChromeStyleSatellite();
   if (client_ && client_->browser()) {
     client_->browser()->GetHost()->CloseBrowser(true);
   }

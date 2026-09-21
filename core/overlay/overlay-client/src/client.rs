@@ -5,12 +5,12 @@
 use std::sync::{Arc, Weak};
 
 use anyhow::{Context as AnyhowContext, bail};
+use bincode::Decode;
 use glint_overlay_common::{
     ipc::{ClientRequest, Frame, ServerToClientPacket},
     request::{Request, WindowRequestItem},
 };
 use glint_overlay_event::OverlayEvent;
-use bincode::Decode;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, WriteHalf, split},
     net::windows::named_pipe::NamedPipeClient,

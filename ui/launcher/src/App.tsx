@@ -9,6 +9,8 @@ import { StoreView } from './components/StoreView';
 import { SettingsView } from './components/SettingsView';
 import { AchievementsView } from './components/AchievementsView';
 import { FriendProfileView } from './components/FriendProfileView';
+import { ArtPickerModal } from './components/ArtPickerModal';
+import { UpdateBanner } from './components/UpdateBanner';
 import { useLauncher } from './hooks/useLauncher';
 import { useFavorites } from './hooks/useFavorites';
 import type { MockFriend } from './data/mockFriends';
@@ -24,6 +26,7 @@ export function LauncherApp() {
   const [tab, setTab] = useState<LauncherTab>('home');
   const [selected, setSelected] = useState<ScannedGame | null>(null);
   const [selectedFriend, setSelectedFriend] = useState<MockFriend | null>(null);
+  const [artPickerGame, setArtPickerGame] = useState<ScannedGame | null>(null);
   const launcher = useLauncher();
   const favorites = useFavorites();
 
@@ -74,6 +77,7 @@ export function LauncherApp() {
             </motion.div>
           )}
         </AnimatePresence>
+        <UpdateBanner />
         <div className="launcher-content">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={contentKey} className="page-shell" {...pageMotion}>
@@ -89,12 +93,16 @@ export function LauncherApp() {
                   games={launcher.games}
                   featured={featured}
                   launching={launcher.launching}
+                  prepareStatuses={launcher.prepareStatuses}
                   covers={launcher.covers}
                   catalog={launcher.catalog}
                   isFavorite={favorites.isFavorite}
                   onToggleFavorite={favorites.toggleFavorite}
                   onAttach={attachGame}
                   onPlay={(game) => void launcher.launchGame(game)}
+                  onRetryPrepare={(game, steamAppId, forceGse) =>
+                    void launcher.retryPrepare(game, steamAppId, forceGse)
+                  }
                   onSelectGame={setSelected}
                   onOpenLibrary={() => goTab('library')}
                   onOpenStore={() => goTab('store')}
@@ -103,21 +111,33 @@ export function LauncherApp() {
                     setSelectedFriend(friend);
                     setTab('home');
                   }}
+                  onCustomizeArt={setArtPickerGame}
+                  forcingGse={
+                    featured ? Boolean(launcher.forcingGse[featured.id]) : false
+                  }
                 />
               ) : tab === 'library' ? (
                 <LibraryView
                   games={launcher.games}
                   featured={featured}
                   launching={launcher.launching}
+                  prepareStatuses={launcher.prepareStatuses}
                   covers={launcher.covers}
                   onAttach={attachGame}
                   onPlay={(game) => void launcher.launchGame(game)}
+                  onRetryPrepare={(game, steamAppId, forceGse) =>
+                    void launcher.retryPrepare(game, steamAppId, forceGse)
+                  }
                   onSelectGame={setSelected}
                   onAddGame={(name, exe) => void launcher.addGame(name, exe)}
                   onReset={() => {
                     setSelected(null);
                     void launcher.resetLibrary();
                   }}
+                  onCustomizeArt={setArtPickerGame}
+                  forcingGse={
+                    featured ? Boolean(launcher.forcingGse[featured.id]) : false
+                  }
                 />
               ) : tab === 'store' ? (
                 <StoreView
@@ -130,6 +150,11 @@ export function LauncherApp() {
                 <AchievementsView
                   games={launcher.games}
                   covers={launcher.covers}
+                  prepareStatuses={launcher.prepareStatuses}
+                  forcingGse={launcher.forcingGse}
+                  onRetryPrepare={(game, steamAppId, forceGse) =>
+                    void launcher.retryPrepare(game, steamAppId, forceGse)
+                  }
                 />
               ) : (
                 <SettingsView
@@ -144,6 +169,18 @@ export function LauncherApp() {
           </AnimatePresence>
         </div>
       </div>
+      <AnimatePresence>
+        {artPickerGame && (
+          <ArtPickerModal
+            key={artPickerGame.id}
+            game={artPickerGame}
+            onClose={() => setArtPickerGame(null)}
+            onApplied={(art) => {
+              launcher.patchCover(artPickerGame.id, art);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

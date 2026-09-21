@@ -6,6 +6,9 @@ import { hostInvoke } from '@glint/overlay-bridge';
 export interface OverlayState {
   connected: boolean;
   targetPid: number | null;
+  gameName: string | null;
+  playtimeSeconds: number | null;
+  attachedAtMs: number | null;
   overlayOpen: boolean;
   panelPins: Record<string, boolean>;
   anyPinned: boolean;
@@ -15,7 +18,11 @@ export interface OverlayState {
 
 interface OverlayContextValue extends OverlayState {
   setMetrics: (metrics: MetricsSnapshot) => void;
-  setConnected: (connected: boolean, pid?: number) => void;
+  setConnected: (
+    connected: boolean,
+    pid?: number,
+    session?: { gameName?: unknown; playtimeSeconds?: unknown },
+  ) => void;
   setOverlayOpen: (open: boolean) => void;
   setPanelPin: (panelKey: string, pinned: boolean) => void;
 }
@@ -31,6 +38,9 @@ export function OverlayProvider({
 }) {
   const [connected, setConnectedState] = useState(false);
   const [targetPid, setTargetPid] = useState<number | null>(null);
+  const [gameName, setGameName] = useState<string | null>(null);
+  const [playtimeSeconds, setPlaytimeSeconds] = useState<number | null>(null);
+  const [attachedAtMs, setAttachedAtMs] = useState<number | null>(null);
   const [overlayOpen, setOverlayOpenState] = useState(false);
   const [panelPins, setPanelPinsState] = useState<Record<string, boolean>>({});
 
@@ -65,10 +75,22 @@ export function OverlayProvider({
     }));
   }, []);
 
-  const setConnected = useCallback((value: boolean, pid?: number) => {
-    setConnectedState(value);
-    setTargetPid(pid ?? null);
-  }, []);
+  const setConnected = useCallback(
+    (
+      value: boolean,
+      pid?: number,
+      session?: { gameName?: unknown; playtimeSeconds?: unknown; attachedAtMs?: unknown },
+    ) => {
+      setConnectedState(value);
+      setTargetPid(pid ?? null);
+      const seconds = session?.playtimeSeconds;
+      setGameName(typeof session?.gameName === 'string' ? session.gameName : null);
+      setPlaytimeSeconds(typeof seconds === 'number' ? seconds : null);
+      const attached = session?.attachedAtMs;
+      setAttachedAtMs(typeof attached === 'number' ? attached : null);
+    },
+    [],
+  );
 
   const setOverlayOpen = useCallback((open: boolean) => {
     setOverlayOpenState(open);
@@ -77,6 +99,9 @@ export function OverlayProvider({
   const value: OverlayContextValue = {
     connected,
     targetPid,
+    gameName,
+    playtimeSeconds,
+    attachedAtMs,
     overlayOpen,
     panelPins,
     anyPinned,

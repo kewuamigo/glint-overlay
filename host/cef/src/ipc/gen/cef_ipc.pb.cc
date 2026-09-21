@@ -238,6 +238,31 @@ struct ReloadDefaultTypeInternal {
   };
 };
 PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ReloadDefaultTypeInternal _Reload_default_instance_;
+PROTOBUF_CONSTEXPR OpenExtensionSatellite::OpenExtensionSatellite(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.extension_id_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.kind_)*/0
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct OpenExtensionSatelliteDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR OpenExtensionSatelliteDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~OpenExtensionSatelliteDefaultTypeInternal() {}
+  union {
+    OpenExtensionSatellite _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 OpenExtensionSatelliteDefaultTypeInternal _OpenExtensionSatellite_default_instance_;
+PROTOBUF_CONSTEXPR CloseExtensionSatellite::CloseExtensionSatellite(
+    ::_pbi::ConstantInitialized) {}
+struct CloseExtensionSatelliteDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR CloseExtensionSatelliteDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~CloseExtensionSatelliteDefaultTypeInternal() {}
+  union {
+    CloseExtensionSatellite _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 CloseExtensionSatelliteDefaultTypeInternal _CloseExtensionSatellite_default_instance_;
 PROTOBUF_CONSTEXPR KeyEvent::KeyEvent(
     ::_pbi::ConstantInitialized): _impl_{
     /*decltype(_impl_.character_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
@@ -309,11 +334,13 @@ struct ReadyDefaultTypeInternal {
 PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ReadyDefaultTypeInternal _Ready_default_instance_;
 PROTOBUF_CONSTEXPR Paint::Paint(
     ::_pbi::ConstantInitialized): _impl_{
-    /*decltype(_impl_.width_)*/0u
+    /*decltype(_impl_._has_bits_)*/{}
+  , /*decltype(_impl_._cached_size_)*/{}
+  , /*decltype(_impl_.width_)*/0u
   , /*decltype(_impl_.height_)*/0u
   , /*decltype(_impl_.nt_handle_)*/uint64_t{0u}
   , /*decltype(_impl_.layout_generation_)*/0u
-  , /*decltype(_impl_._cached_size_)*/{}} {}
+  , /*decltype(_impl_.layer_)*/0u} {}
 struct PaintDefaultTypeInternal {
   PROTOBUF_CONSTEXPR PaintDefaultTypeInternal()
       : _instance(::_pbi::ConstantInitialized{}) {}
@@ -417,8 +444,8 @@ struct BridgePushDefaultTypeInternal {
 PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 BridgePushDefaultTypeInternal _BridgePush_default_instance_;
 }  // namespace cef
 }  // namespace gameoverlay
-static ::_pb::Metadata file_level_metadata_cef_5fipc_2eproto[27];
-static const ::_pb::EnumDescriptor* file_level_enum_descriptors_cef_5fipc_2eproto[7];
+static ::_pb::Metadata file_level_metadata_cef_5fipc_2eproto[29];
+static const ::_pb::EnumDescriptor* file_level_enum_descriptors_cef_5fipc_2eproto[8];
 static constexpr ::_pb::ServiceDescriptor const** file_level_service_descriptors_cef_5fipc_2eproto = nullptr;
 
 const uint32_t TableStruct_cef_5fipc_2eproto::offsets[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
@@ -430,6 +457,8 @@ const uint32_t TableStruct_cef_5fipc_2eproto::offsets[] PROTOBUF_SECTION_VARIABL
   ~0u,  // no _inlined_string_donated_
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Envelope, _impl_.protocol_version_),
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Envelope, _impl_.correlation_id_),
+  ::_pbi::kInvalidFieldOffsetTag,
+  ::_pbi::kInvalidFieldOffsetTag,
   ::_pbi::kInvalidFieldOffsetTag,
   ::_pbi::kInvalidFieldOffsetTag,
   ::_pbi::kInvalidFieldOffsetTag,
@@ -573,6 +602,20 @@ const uint32_t TableStruct_cef_5fipc_2eproto::offsets[] PROTOBUF_SECTION_VARIABL
   ~0u,  // no _weak_field_map_
   ~0u,  // no _inlined_string_donated_
   ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::OpenExtensionSatellite, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::OpenExtensionSatellite, _impl_.extension_id_),
+  PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::OpenExtensionSatellite, _impl_.kind_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::CloseExtensionSatellite, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  ~0u,  // no _has_bits_
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::KeyEvent, _internal_metadata_),
   ~0u,  // no _extensions_
   ~0u,  // no _oneof_case_
@@ -617,7 +660,7 @@ const uint32_t TableStruct_cef_5fipc_2eproto::offsets[] PROTOBUF_SECTION_VARIABL
   ~0u,  // no _weak_field_map_
   ~0u,  // no _inlined_string_donated_
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Ready, _impl_.chrome_top_px_),
-  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Paint, _impl_._has_bits_),
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Paint, _internal_metadata_),
   ~0u,  // no _extensions_
   ~0u,  // no _oneof_case_
@@ -627,6 +670,12 @@ const uint32_t TableStruct_cef_5fipc_2eproto::offsets[] PROTOBUF_SECTION_VARIABL
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Paint, _impl_.height_),
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Paint, _impl_.nt_handle_),
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Paint, _impl_.layout_generation_),
+  PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::Paint, _impl_.layer_),
+  ~0u,
+  ~0u,
+  ~0u,
+  ~0u,
+  0,
   ~0u,  // no _has_bits_
   PROTOBUF_FIELD_OFFSET(::gameoverlay::cef::PaintError, _internal_metadata_),
   ~0u,  // no _extensions_
@@ -686,32 +735,34 @@ const uint32_t TableStruct_cef_5fipc_2eproto::offsets[] PROTOBUF_SECTION_VARIABL
 };
 static const ::_pbi::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
   { 0, -1, -1, sizeof(::gameoverlay::cef::Envelope)},
-  { 35, -1, -1, sizeof(::gameoverlay::cef::Hello)},
-  { 41, -1, -1, sizeof(::gameoverlay::cef::HelloAck)},
-  { 47, -1, -1, sizeof(::gameoverlay::cef::Error)},
-  { 56, -1, -1, sizeof(::gameoverlay::cef::CreateSession)},
-  { 66, -1, -1, sizeof(::gameoverlay::cef::Shutdown)},
-  { 73, -1, -1, sizeof(::gameoverlay::cef::SetSurfaceSize)},
-  { 81, -1, -1, sizeof(::gameoverlay::cef::SetInnerBounds)},
-  { 92, -1, -1, sizeof(::gameoverlay::cef::SetFocus)},
-  { 100, -1, -1, sizeof(::gameoverlay::cef::SetHidden)},
-  { 107, -1, -1, sizeof(::gameoverlay::cef::Navigate)},
-  { 114, -1, -1, sizeof(::gameoverlay::cef::ContentNavigate)},
-  { 121, -1, -1, sizeof(::gameoverlay::cef::SetContentRect)},
-  { 132, -1, -1, sizeof(::gameoverlay::cef::GoBack)},
-  { 138, -1, -1, sizeof(::gameoverlay::cef::GoForward)},
-  { 144, -1, -1, sizeof(::gameoverlay::cef::Reload)},
-  { 150, -1, -1, sizeof(::gameoverlay::cef::KeyEvent)},
-  { 163, -1, -1, sizeof(::gameoverlay::cef::MouseEvent)},
-  { 176, -1, -1, sizeof(::gameoverlay::cef::WheelEvent)},
-  { 188, -1, -1, sizeof(::gameoverlay::cef::Ready)},
-  { 195, -1, -1, sizeof(::gameoverlay::cef::Paint)},
-  { 205, -1, -1, sizeof(::gameoverlay::cef::PaintError)},
-  { 212, -1, -1, sizeof(::gameoverlay::cef::NavState)},
-  { 223, -1, -1, sizeof(::gameoverlay::cef::HostUiAction)},
-  { 234, -1, -1, sizeof(::gameoverlay::cef::BridgeInvoke)},
-  { 244, -1, -1, sizeof(::gameoverlay::cef::BridgeResult)},
-  { 254, -1, -1, sizeof(::gameoverlay::cef::BridgePush)},
+  { 37, -1, -1, sizeof(::gameoverlay::cef::Hello)},
+  { 43, -1, -1, sizeof(::gameoverlay::cef::HelloAck)},
+  { 49, -1, -1, sizeof(::gameoverlay::cef::Error)},
+  { 58, -1, -1, sizeof(::gameoverlay::cef::CreateSession)},
+  { 68, -1, -1, sizeof(::gameoverlay::cef::Shutdown)},
+  { 75, -1, -1, sizeof(::gameoverlay::cef::SetSurfaceSize)},
+  { 83, -1, -1, sizeof(::gameoverlay::cef::SetInnerBounds)},
+  { 94, -1, -1, sizeof(::gameoverlay::cef::SetFocus)},
+  { 102, -1, -1, sizeof(::gameoverlay::cef::SetHidden)},
+  { 109, -1, -1, sizeof(::gameoverlay::cef::Navigate)},
+  { 116, -1, -1, sizeof(::gameoverlay::cef::ContentNavigate)},
+  { 123, -1, -1, sizeof(::gameoverlay::cef::SetContentRect)},
+  { 134, -1, -1, sizeof(::gameoverlay::cef::GoBack)},
+  { 140, -1, -1, sizeof(::gameoverlay::cef::GoForward)},
+  { 146, -1, -1, sizeof(::gameoverlay::cef::Reload)},
+  { 152, -1, -1, sizeof(::gameoverlay::cef::OpenExtensionSatellite)},
+  { 160, -1, -1, sizeof(::gameoverlay::cef::CloseExtensionSatellite)},
+  { 166, -1, -1, sizeof(::gameoverlay::cef::KeyEvent)},
+  { 179, -1, -1, sizeof(::gameoverlay::cef::MouseEvent)},
+  { 192, -1, -1, sizeof(::gameoverlay::cef::WheelEvent)},
+  { 204, -1, -1, sizeof(::gameoverlay::cef::Ready)},
+  { 211, 222, -1, sizeof(::gameoverlay::cef::Paint)},
+  { 227, -1, -1, sizeof(::gameoverlay::cef::PaintError)},
+  { 234, -1, -1, sizeof(::gameoverlay::cef::NavState)},
+  { 245, -1, -1, sizeof(::gameoverlay::cef::HostUiAction)},
+  { 256, -1, -1, sizeof(::gameoverlay::cef::BridgeInvoke)},
+  { 266, -1, -1, sizeof(::gameoverlay::cef::BridgeResult)},
+  { 276, -1, -1, sizeof(::gameoverlay::cef::BridgePush)},
 };
 
 static const ::_pb::Message* const file_default_instances[] = {
@@ -731,6 +782,8 @@ static const ::_pb::Message* const file_default_instances[] = {
   &::gameoverlay::cef::_GoBack_default_instance_._instance,
   &::gameoverlay::cef::_GoForward_default_instance_._instance,
   &::gameoverlay::cef::_Reload_default_instance_._instance,
+  &::gameoverlay::cef::_OpenExtensionSatellite_default_instance_._instance,
+  &::gameoverlay::cef::_CloseExtensionSatellite_default_instance_._instance,
   &::gameoverlay::cef::_KeyEvent_default_instance_._instance,
   &::gameoverlay::cef::_MouseEvent_default_instance_._instance,
   &::gameoverlay::cef::_WheelEvent_default_instance_._instance,
@@ -745,7 +798,7 @@ static const ::_pb::Message* const file_default_instances[] = {
 };
 
 const char descriptor_table_protodef_cef_5fipc_2eproto[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) =
-  "\n\rcef_ipc.proto\022\017gameoverlay.cef\"\213\013\n\010Env"
+  "\n\rcef_ipc.proto\022\017gameoverlay.cef\"\247\014\n\010Env"
   "elope\022:\n\020protocol_version\030\001 \001(\0162 .gameov"
   "erlay.cef.ProtocolVersion\022\026\n\016correlation"
   "_id\030\002 \001(\r\022\'\n\005hello\030\n \001(\0132\026.gameoverlay.c"
@@ -770,91 +823,102 @@ const char descriptor_table_protodef_cef_5fipc_2eproto[] PROTOBUF_SECTION_VARIAB
   "sultH\000\0222\n\013bridge_push\030  \001(\0132\033.gameoverla"
   "y.cef.BridgePushH\000\022;\n\020set_content_rect\030!"
   " \001(\0132\037.gameoverlay.cef.SetContentRectH\000\022"
-  ".\n\tkey_event\030( \001(\0132\031.gameoverlay.cef.Key"
-  "EventH\000\0222\n\013mouse_event\030) \001(\0132\033.gameoverl"
-  "ay.cef.MouseEventH\000\0222\n\013wheel_event\030* \001(\013"
-  "2\033.gameoverlay.cef.WheelEventH\000\022\'\n\005ready"
-  "\0302 \001(\0132\026.gameoverlay.cef.ReadyH\000\022\'\n\005pain"
-  "t\0303 \001(\0132\026.gameoverlay.cef.PaintH\000\0222\n\013pai"
-  "nt_error\0304 \001(\0132\033.gameoverlay.cef.PaintEr"
-  "rorH\000\022.\n\tnav_state\0305 \001(\0132\031.gameoverlay.c"
-  "ef.NavStateH\000\0227\n\016host_ui_action\0306 \001(\0132\035."
-  "gameoverlay.cef.HostUiActionH\000\0226\n\rbridge"
-  "_invoke\0307 \001(\0132\035.gameoverlay.cef.BridgeIn"
-  "vokeH\000B\006\n\004body\"\007\n\005Hello\"\n\n\010HelloAck\">\n\005E"
-  "rror\022\026\n\016correlation_id\030\001 \001(\r\022\014\n\004code\030\002 \001"
-  "(\t\022\017\n\007message\030\003 \001(\t\"g\n\rCreateSession\022\r\n\005"
-  "width\030\001 \001(\r\022\016\n\006height\030\002 \001(\r\022\013\n\003url\030\003 \001(\t"
-  "\022*\n\004mode\030\004 \001(\0162\034.gameoverlay.cef.Session"
-  "Mode\"%\n\010Shutdown\022\031\n\021quit_message_loop\030\001 "
-  "\001(\010\"/\n\016SetSurfaceSize\022\r\n\005width\030\001 \001(\r\022\016\n\006"
-  "height\030\002 \001(\r\"`\n\016SetInnerBounds\022\t\n\001x\030\001 \001("
-  "\005\022\t\n\001y\030\002 \001(\005\022\r\n\005width\030\003 \001(\r\022\016\n\006height\030\004 "
-  "\001(\r\022\031\n\021layout_generation\030\005 \001(\r\"G\n\010SetFoc"
-  "us\022\r\n\005focus\030\001 \001(\010\022,\n\006target\030\002 \001(\0162\034.game"
-  "overlay.cef.FocusTarget\"\033\n\tSetHidden\022\016\n\006"
-  "hidden\030\001 \001(\010\"\027\n\010Navigate\022\013\n\003url\030\001 \001(\t\"\036\n"
-  "\017ContentNavigate\022\013\n\003url\030\001 \001(\t\"T\n\016SetCont"
-  "entRect\022\r\n\005clear\030\001 \001(\010\022\t\n\001x\030\002 \001(\005\022\t\n\001y\030\003"
-  " \001(\005\022\r\n\005width\030\004 \001(\r\022\016\n\006height\030\005 \001(\r\"\010\n\006G"
-  "oBack\"\013\n\tGoForward\"\010\n\006Reload\"\325\001\n\010KeyEven"
-  "t\022+\n\004type\030\001 \001(\0162\035.gameoverlay.cef.KeyEve"
-  "ntType\022,\n\006target\030\002 \001(\0162\034.gameoverlay.cef"
-  ".FocusTarget\022\021\n\tmodifiers\030\003 \001(\r\022\030\n\020windo"
-  "ws_key_code\030\004 \001(\r\022\027\n\017native_key_code\030\005 \001"
-  "(\r\022\025\n\ris_system_key\030\006 \001(\010\022\021\n\tcharacter\030\007"
-  " \001(\t\"\325\001\n\nMouseEvent\022-\n\004type\030\001 \001(\0162\037.game"
-  "overlay.cef.MouseEventType\022,\n\006target\030\002 \001"
-  "(\0162\034.gameoverlay.cef.FocusTarget\022\021\n\tmodi"
-  "fiers\030\003 \001(\r\022,\n\006button\030\004 \001(\0162\034.gameoverla"
-  "y.cef.MouseButton\022\t\n\001x\030\005 \001(\005\022\t\n\001y\030\006 \001(\005\022"
-  "\023\n\013click_count\030\007 \001(\r\"\205\001\n\nWheelEvent\022,\n\006t"
-  "arget\030\001 \001(\0162\034.gameoverlay.cef.FocusTarge"
-  "t\022\021\n\tmodifiers\030\002 \001(\r\022\t\n\001x\030\003 \001(\005\022\t\n\001y\030\004 \001"
-  "(\005\022\017\n\007delta_x\030\005 \001(\005\022\017\n\007delta_y\030\006 \001(\005\"\036\n\005"
-  "Ready\022\025\n\rchrome_top_px\030\001 \001(\r\"T\n\005Paint\022\r\n"
-  "\005width\030\001 \001(\r\022\016\n\006height\030\002 \001(\r\022\021\n\tnt_handl"
-  "e\030\003 \001(\004\022\031\n\021layout_generation\030\004 \001(\r\"\035\n\nPa"
-  "intError\022\017\n\007message\030\001 \001(\t\"d\n\010NavState\022\013\n"
-  "\003url\030\001 \001(\t\022\r\n\005title\030\002 \001(\t\022\017\n\007loading\030\003 \001"
-  "(\010\022\023\n\013can_go_back\030\004 \001(\010\022\026\n\016can_go_forwar"
-  "d\030\005 \001(\010\"o\n\014HostUiAction\022/\n\004kind\030\001 \001(\0162!."
-  "gameoverlay.cef.HostUiActionKind\022\n\n\002dx\030\002"
-  " \001(\005\022\n\n\002dy\030\003 \001(\005\022\n\n\002dw\030\004 \001(\005\022\n\n\002dh\030\005 \001(\005"
-  "\"X\n\014BridgeInvoke\022\022\n\nrequest_id\030\001 \001(\r\022\016\n\006"
-  "method\030\002 \001(\t\022\021\n\targs_json\030\003 \001(\t\022\021\n\tplugi"
-  "n_id\030\004 \001(\t\"R\n\014BridgeResult\022\022\n\nrequest_id"
-  "\030\001 \001(\r\022\n\n\002ok\030\002 \001(\010\022\023\n\013result_json\030\003 \001(\t\022"
-  "\r\n\005error\030\004 \001(\t\"\"\n\nBridgePush\022\024\n\014message_"
-  "json\030\001 \001(\t*K\n\017ProtocolVersion\022 \n\034PROTOCO"
-  "L_VERSION_UNSPECIFIED\020\000\022\026\n\022PROTOCOL_VERS"
-  "ION_1\020\001*^\n\013FocusTarget\022\034\n\030FOCUS_TARGET_U"
-  "NSPECIFIED\020\000\022\027\n\023FOCUS_TARGET_CHROME\020\001\022\030\n"
-  "\024FOCUS_TARGET_CONTENT\020\002*\234\001\n\014KeyEventType"
-  "\022\036\n\032KEY_EVENT_TYPE_UNSPECIFIED\020\000\022\033\n\027KEY_"
-  "EVENT_TYPE_RAW_DOWN\020\001\022\033\n\027KEY_EVENT_TYPE_"
-  "KEY_DOWN\020\002\022\031\n\025KEY_EVENT_TYPE_KEY_UP\020\003\022\027\n"
-  "\023KEY_EVENT_TYPE_CHAR\020\004*\235\001\n\016MouseEventTyp"
-  "e\022 \n\034MOUSE_EVENT_TYPE_UNSPECIFIED\020\000\022\031\n\025M"
-  "OUSE_EVENT_TYPE_MOVE\020\001\022\031\n\025MOUSE_EVENT_TY"
-  "PE_DOWN\020\002\022\027\n\023MOUSE_EVENT_TYPE_UP\020\003\022\032\n\026MO"
-  "USE_EVENT_TYPE_LEAVE\020\004*s\n\013MouseButton\022\034\n"
-  "\030MOUSE_BUTTON_UNSPECIFIED\020\000\022\025\n\021MOUSE_BUT"
-  "TON_LEFT\020\001\022\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022\026\n\022M"
-  "OUSE_BUTTON_RIGHT\020\003*A\n\013SessionMode\022\034\n\030SE"
-  "SSION_MODE_UNSPECIFIED\020\000\022\024\n\020SESSION_MODE"
-  "_OSR\020\001*\272\001\n\020HostUiActionKind\022#\n\037HOST_UI_A"
-  "CTION_KIND_UNSPECIFIED\020\000\022\035\n\031HOST_UI_ACTI"
-  "ON_KIND_CLOSE\020\001\022\034\n\030HOST_UI_ACTION_KIND_M"
-  "OVE\020\002\022 \n\034HOST_UI_ACTION_KIND_MINIMIZE\020\003\022"
-  "\"\n\036HOST_UI_ACTION_KIND_SET_BOUNDS\020\004b\006pro"
-  "to3"
+  "K\n\030open_extension_satellite\030\" \001(\0132\'.game"
+  "overlay.cef.OpenExtensionSatelliteH\000\022M\n\031"
+  "close_extension_satellite\030# \001(\0132(.gameov"
+  "erlay.cef.CloseExtensionSatelliteH\000\022.\n\tk"
+  "ey_event\030( \001(\0132\031.gameoverlay.cef.KeyEven"
+  "tH\000\0222\n\013mouse_event\030) \001(\0132\033.gameoverlay.c"
+  "ef.MouseEventH\000\0222\n\013wheel_event\030* \001(\0132\033.g"
+  "ameoverlay.cef.WheelEventH\000\022\'\n\005ready\0302 \001"
+  "(\0132\026.gameoverlay.cef.ReadyH\000\022\'\n\005paint\0303 "
+  "\001(\0132\026.gameoverlay.cef.PaintH\000\0222\n\013paint_e"
+  "rror\0304 \001(\0132\033.gameoverlay.cef.PaintErrorH"
+  "\000\022.\n\tnav_state\0305 \001(\0132\031.gameoverlay.cef.N"
+  "avStateH\000\0227\n\016host_ui_action\0306 \001(\0132\035.game"
+  "overlay.cef.HostUiActionH\000\0226\n\rbridge_inv"
+  "oke\0307 \001(\0132\035.gameoverlay.cef.BridgeInvoke"
+  "H\000B\006\n\004body\"\007\n\005Hello\"\n\n\010HelloAck\">\n\005Error"
+  "\022\026\n\016correlation_id\030\001 \001(\r\022\014\n\004code\030\002 \001(\t\022\017"
+  "\n\007message\030\003 \001(\t\"g\n\rCreateSession\022\r\n\005widt"
+  "h\030\001 \001(\r\022\016\n\006height\030\002 \001(\r\022\013\n\003url\030\003 \001(\t\022*\n\004"
+  "mode\030\004 \001(\0162\034.gameoverlay.cef.SessionMode"
+  "\"%\n\010Shutdown\022\031\n\021quit_message_loop\030\001 \001(\010\""
+  "/\n\016SetSurfaceSize\022\r\n\005width\030\001 \001(\r\022\016\n\006heig"
+  "ht\030\002 \001(\r\"`\n\016SetInnerBounds\022\t\n\001x\030\001 \001(\005\022\t\n"
+  "\001y\030\002 \001(\005\022\r\n\005width\030\003 \001(\r\022\016\n\006height\030\004 \001(\r\022"
+  "\031\n\021layout_generation\030\005 \001(\r\"G\n\010SetFocus\022\r"
+  "\n\005focus\030\001 \001(\010\022,\n\006target\030\002 \001(\0162\034.gameover"
+  "lay.cef.FocusTarget\"\033\n\tSetHidden\022\016\n\006hidd"
+  "en\030\001 \001(\010\"\027\n\010Navigate\022\013\n\003url\030\001 \001(\t\"\036\n\017Con"
+  "tentNavigate\022\013\n\003url\030\001 \001(\t\"T\n\016SetContentR"
+  "ect\022\r\n\005clear\030\001 \001(\010\022\t\n\001x\030\002 \001(\005\022\t\n\001y\030\003 \001(\005"
+  "\022\r\n\005width\030\004 \001(\r\022\016\n\006height\030\005 \001(\r\"\010\n\006GoBac"
+  "k\"\013\n\tGoForward\"\010\n\006Reload\"e\n\026OpenExtensio"
+  "nSatellite\022\024\n\014extension_id\030\001 \001(\t\0225\n\004kind"
+  "\030\002 \001(\0162\'.gameoverlay.cef.ExtensionSatell"
+  "iteKind\"\031\n\027CloseExtensionSatellite\"\325\001\n\010K"
+  "eyEvent\022+\n\004type\030\001 \001(\0162\035.gameoverlay.cef."
+  "KeyEventType\022,\n\006target\030\002 \001(\0162\034.gameoverl"
+  "ay.cef.FocusTarget\022\021\n\tmodifiers\030\003 \001(\r\022\030\n"
+  "\020windows_key_code\030\004 \001(\r\022\027\n\017native_key_co"
+  "de\030\005 \001(\r\022\025\n\ris_system_key\030\006 \001(\010\022\021\n\tchara"
+  "cter\030\007 \001(\t\"\325\001\n\nMouseEvent\022-\n\004type\030\001 \001(\0162"
+  "\037.gameoverlay.cef.MouseEventType\022,\n\006targ"
+  "et\030\002 \001(\0162\034.gameoverlay.cef.FocusTarget\022\021"
+  "\n\tmodifiers\030\003 \001(\r\022,\n\006button\030\004 \001(\0162\034.game"
+  "overlay.cef.MouseButton\022\t\n\001x\030\005 \001(\005\022\t\n\001y\030"
+  "\006 \001(\005\022\023\n\013click_count\030\007 \001(\r\"\205\001\n\nWheelEven"
+  "t\022,\n\006target\030\001 \001(\0162\034.gameoverlay.cef.Focu"
+  "sTarget\022\021\n\tmodifiers\030\002 \001(\r\022\t\n\001x\030\003 \001(\005\022\t\n"
+  "\001y\030\004 \001(\005\022\017\n\007delta_x\030\005 \001(\005\022\017\n\007delta_y\030\006 \001"
+  "(\005\"\036\n\005Ready\022\025\n\rchrome_top_px\030\001 \001(\r\"r\n\005Pa"
+  "int\022\r\n\005width\030\001 \001(\r\022\016\n\006height\030\002 \001(\r\022\021\n\tnt"
+  "_handle\030\003 \001(\004\022\031\n\021layout_generation\030\004 \001(\r"
+  "\022\022\n\005layer\030\005 \001(\rH\000\210\001\001B\010\n\006_layer\"\035\n\nPaintE"
+  "rror\022\017\n\007message\030\001 \001(\t\"d\n\010NavState\022\013\n\003url"
+  "\030\001 \001(\t\022\r\n\005title\030\002 \001(\t\022\017\n\007loading\030\003 \001(\010\022\023"
+  "\n\013can_go_back\030\004 \001(\010\022\026\n\016can_go_forward\030\005 "
+  "\001(\010\"o\n\014HostUiAction\022/\n\004kind\030\001 \001(\0162!.game"
+  "overlay.cef.HostUiActionKind\022\n\n\002dx\030\002 \001(\005"
+  "\022\n\n\002dy\030\003 \001(\005\022\n\n\002dw\030\004 \001(\005\022\n\n\002dh\030\005 \001(\005\"X\n\014"
+  "BridgeInvoke\022\022\n\nrequest_id\030\001 \001(\r\022\016\n\006meth"
+  "od\030\002 \001(\t\022\021\n\targs_json\030\003 \001(\t\022\021\n\tplugin_id"
+  "\030\004 \001(\t\"R\n\014BridgeResult\022\022\n\nrequest_id\030\001 \001"
+  "(\r\022\n\n\002ok\030\002 \001(\010\022\023\n\013result_json\030\003 \001(\t\022\r\n\005e"
+  "rror\030\004 \001(\t\"\"\n\nBridgePush\022\024\n\014message_json"
+  "\030\001 \001(\t*K\n\017ProtocolVersion\022 \n\034PROTOCOL_VE"
+  "RSION_UNSPECIFIED\020\000\022\026\n\022PROTOCOL_VERSION_"
+  "1\020\001*^\n\013FocusTarget\022\034\n\030FOCUS_TARGET_UNSPE"
+  "CIFIED\020\000\022\027\n\023FOCUS_TARGET_CHROME\020\001\022\030\n\024FOC"
+  "US_TARGET_CONTENT\020\002*\234\001\n\014KeyEventType\022\036\n\032"
+  "KEY_EVENT_TYPE_UNSPECIFIED\020\000\022\033\n\027KEY_EVEN"
+  "T_TYPE_RAW_DOWN\020\001\022\033\n\027KEY_EVENT_TYPE_KEY_"
+  "DOWN\020\002\022\031\n\025KEY_EVENT_TYPE_KEY_UP\020\003\022\027\n\023KEY"
+  "_EVENT_TYPE_CHAR\020\004*\235\001\n\016MouseEventType\022 \n"
+  "\034MOUSE_EVENT_TYPE_UNSPECIFIED\020\000\022\031\n\025MOUSE"
+  "_EVENT_TYPE_MOVE\020\001\022\031\n\025MOUSE_EVENT_TYPE_D"
+  "OWN\020\002\022\027\n\023MOUSE_EVENT_TYPE_UP\020\003\022\032\n\026MOUSE_"
+  "EVENT_TYPE_LEAVE\020\004*s\n\013MouseButton\022\034\n\030MOU"
+  "SE_BUTTON_UNSPECIFIED\020\000\022\025\n\021MOUSE_BUTTON_"
+  "LEFT\020\001\022\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022\026\n\022MOUSE"
+  "_BUTTON_RIGHT\020\003*A\n\013SessionMode\022\034\n\030SESSIO"
+  "N_MODE_UNSPECIFIED\020\000\022\024\n\020SESSION_MODE_OSR"
+  "\020\001*\272\001\n\020HostUiActionKind\022#\n\037HOST_UI_ACTIO"
+  "N_KIND_UNSPECIFIED\020\000\022\035\n\031HOST_UI_ACTION_K"
+  "IND_CLOSE\020\001\022\034\n\030HOST_UI_ACTION_KIND_MOVE\020"
+  "\002\022 \n\034HOST_UI_ACTION_KIND_MINIMIZE\020\003\022\"\n\036H"
+  "OST_UI_ACTION_KIND_SET_BOUNDS\020\004*\214\001\n\026Exte"
+  "nsionSatelliteKind\022(\n$EXTENSION_SATELLIT"
+  "E_KIND_UNSPECIFIED\020\000\022$\n EXTENSION_SATELL"
+  "ITE_KIND_OPTIONS\020\001\022\"\n\036EXTENSION_SATELLIT"
+  "E_KIND_POPUP\020\002b\006proto3"
   ;
 static ::_pbi::once_flag descriptor_table_cef_5fipc_2eproto_once;
 const ::_pbi::DescriptorTable descriptor_table_cef_5fipc_2eproto = {
-    false, false, 4123, descriptor_table_protodef_cef_5fipc_2eproto,
+    false, false, 4582, descriptor_table_protodef_cef_5fipc_2eproto,
     "cef_ipc.proto",
-    &descriptor_table_cef_5fipc_2eproto_once, nullptr, 0, 27,
+    &descriptor_table_cef_5fipc_2eproto_once, nullptr, 0, 29,
     schemas, file_default_instances, TableStruct_cef_5fipc_2eproto::offsets,
     file_level_metadata_cef_5fipc_2eproto, file_level_enum_descriptors_cef_5fipc_2eproto,
     file_level_service_descriptors_cef_5fipc_2eproto,
@@ -977,6 +1041,21 @@ bool HostUiActionKind_IsValid(int value) {
   }
 }
 
+const ::PROTOBUF_NAMESPACE_ID::EnumDescriptor* ExtensionSatelliteKind_descriptor() {
+  ::PROTOBUF_NAMESPACE_ID::internal::AssignDescriptors(&descriptor_table_cef_5fipc_2eproto);
+  return file_level_enum_descriptors_cef_5fipc_2eproto[7];
+}
+bool ExtensionSatelliteKind_IsValid(int value) {
+  switch (value) {
+    case 0:
+    case 1:
+    case 2:
+      return true;
+    default:
+      return false;
+  }
+}
+
 
 // ===================================================================
 
@@ -999,6 +1078,8 @@ class Envelope::_Internal {
   static const ::gameoverlay::cef::BridgeResult& bridge_result(const Envelope* msg);
   static const ::gameoverlay::cef::BridgePush& bridge_push(const Envelope* msg);
   static const ::gameoverlay::cef::SetContentRect& set_content_rect(const Envelope* msg);
+  static const ::gameoverlay::cef::OpenExtensionSatellite& open_extension_satellite(const Envelope* msg);
+  static const ::gameoverlay::cef::CloseExtensionSatellite& close_extension_satellite(const Envelope* msg);
   static const ::gameoverlay::cef::KeyEvent& key_event(const Envelope* msg);
   static const ::gameoverlay::cef::MouseEvent& mouse_event(const Envelope* msg);
   static const ::gameoverlay::cef::WheelEvent& wheel_event(const Envelope* msg);
@@ -1077,6 +1158,14 @@ Envelope::_Internal::bridge_push(const Envelope* msg) {
 const ::gameoverlay::cef::SetContentRect&
 Envelope::_Internal::set_content_rect(const Envelope* msg) {
   return *msg->_impl_.body_.set_content_rect_;
+}
+const ::gameoverlay::cef::OpenExtensionSatellite&
+Envelope::_Internal::open_extension_satellite(const Envelope* msg) {
+  return *msg->_impl_.body_.open_extension_satellite_;
+}
+const ::gameoverlay::cef::CloseExtensionSatellite&
+Envelope::_Internal::close_extension_satellite(const Envelope* msg) {
+  return *msg->_impl_.body_.close_extension_satellite_;
 }
 const ::gameoverlay::cef::KeyEvent&
 Envelope::_Internal::key_event(const Envelope* msg) {
@@ -1369,6 +1458,36 @@ void Envelope::set_allocated_set_content_rect(::gameoverlay::cef::SetContentRect
   }
   // @@protoc_insertion_point(field_set_allocated:gameoverlay.cef.Envelope.set_content_rect)
 }
+void Envelope::set_allocated_open_extension_satellite(::gameoverlay::cef::OpenExtensionSatellite* open_extension_satellite) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArenaForAllocation();
+  clear_body();
+  if (open_extension_satellite) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::InternalGetOwningArena(open_extension_satellite);
+    if (message_arena != submessage_arena) {
+      open_extension_satellite = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, open_extension_satellite, submessage_arena);
+    }
+    set_has_open_extension_satellite();
+    _impl_.body_.open_extension_satellite_ = open_extension_satellite;
+  }
+  // @@protoc_insertion_point(field_set_allocated:gameoverlay.cef.Envelope.open_extension_satellite)
+}
+void Envelope::set_allocated_close_extension_satellite(::gameoverlay::cef::CloseExtensionSatellite* close_extension_satellite) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArenaForAllocation();
+  clear_body();
+  if (close_extension_satellite) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::InternalGetOwningArena(close_extension_satellite);
+    if (message_arena != submessage_arena) {
+      close_extension_satellite = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, close_extension_satellite, submessage_arena);
+    }
+    set_has_close_extension_satellite();
+    _impl_.body_.close_extension_satellite_ = close_extension_satellite;
+  }
+  // @@protoc_insertion_point(field_set_allocated:gameoverlay.cef.Envelope.close_extension_satellite)
+}
 void Envelope::set_allocated_key_event(::gameoverlay::cef::KeyEvent* key_event) {
   ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArenaForAllocation();
   clear_body();
@@ -1611,6 +1730,16 @@ Envelope::Envelope(const Envelope& from)
           from._internal_set_content_rect());
       break;
     }
+    case kOpenExtensionSatellite: {
+      _this->_internal_mutable_open_extension_satellite()->::gameoverlay::cef::OpenExtensionSatellite::MergeFrom(
+          from._internal_open_extension_satellite());
+      break;
+    }
+    case kCloseExtensionSatellite: {
+      _this->_internal_mutable_close_extension_satellite()->::gameoverlay::cef::CloseExtensionSatellite::MergeFrom(
+          from._internal_close_extension_satellite());
+      break;
+    }
     case kKeyEvent: {
       _this->_internal_mutable_key_event()->::gameoverlay::cef::KeyEvent::MergeFrom(
           from._internal_key_event());
@@ -1799,6 +1928,18 @@ void Envelope::clear_body() {
     case kSetContentRect: {
       if (GetArenaForAllocation() == nullptr) {
         delete _impl_.body_.set_content_rect_;
+      }
+      break;
+    }
+    case kOpenExtensionSatellite: {
+      if (GetArenaForAllocation() == nullptr) {
+        delete _impl_.body_.open_extension_satellite_;
+      }
+      break;
+    }
+    case kCloseExtensionSatellite: {
+      if (GetArenaForAllocation() == nullptr) {
+        delete _impl_.body_.close_extension_satellite_;
       }
       break;
     }
@@ -2036,6 +2177,22 @@ const char* Envelope::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx)
         } else
           goto handle_unusual;
         continue;
+      // .gameoverlay.cef.OpenExtensionSatellite open_extension_satellite = 34;
+      case 34:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 18)) {
+          ptr = ctx->ParseMessage(_internal_mutable_open_extension_satellite(), ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      // .gameoverlay.cef.CloseExtensionSatellite close_extension_satellite = 35;
+      case 35:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 26)) {
+          ptr = ctx->ParseMessage(_internal_mutable_close_extension_satellite(), ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
       // .gameoverlay.cef.KeyEvent key_event = 40;
       case 40:
         if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 66)) {
@@ -2269,6 +2426,20 @@ uint8_t* Envelope::_InternalSerialize(
         _Internal::set_content_rect(this).GetCachedSize(), target, stream);
   }
 
+  // .gameoverlay.cef.OpenExtensionSatellite open_extension_satellite = 34;
+  if (_internal_has_open_extension_satellite()) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(34, _Internal::open_extension_satellite(this),
+        _Internal::open_extension_satellite(this).GetCachedSize(), target, stream);
+  }
+
+  // .gameoverlay.cef.CloseExtensionSatellite close_extension_satellite = 35;
+  if (_internal_has_close_extension_satellite()) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(35, _Internal::close_extension_satellite(this),
+        _Internal::close_extension_satellite(this).GetCachedSize(), target, stream);
+  }
+
   // .gameoverlay.cef.KeyEvent key_event = 40;
   if (_internal_has_key_event()) {
     target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
@@ -2479,6 +2650,20 @@ size_t Envelope::ByteSizeLong() const {
           *_impl_.body_.set_content_rect_);
       break;
     }
+    // .gameoverlay.cef.OpenExtensionSatellite open_extension_satellite = 34;
+    case kOpenExtensionSatellite: {
+      total_size += 2 +
+        ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+          *_impl_.body_.open_extension_satellite_);
+      break;
+    }
+    // .gameoverlay.cef.CloseExtensionSatellite close_extension_satellite = 35;
+    case kCloseExtensionSatellite: {
+      total_size += 2 +
+        ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+          *_impl_.body_.close_extension_satellite_);
+      break;
+    }
     // .gameoverlay.cef.KeyEvent key_event = 40;
     case kKeyEvent: {
       total_size += 2 +
@@ -2654,6 +2839,16 @@ void Envelope::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTO
     case kSetContentRect: {
       _this->_internal_mutable_set_content_rect()->::gameoverlay::cef::SetContentRect::MergeFrom(
           from._internal_set_content_rect());
+      break;
+    }
+    case kOpenExtensionSatellite: {
+      _this->_internal_mutable_open_extension_satellite()->::gameoverlay::cef::OpenExtensionSatellite::MergeFrom(
+          from._internal_open_extension_satellite());
+      break;
+    }
+    case kCloseExtensionSatellite: {
+      _this->_internal_mutable_close_extension_satellite()->::gameoverlay::cef::CloseExtensionSatellite::MergeFrom(
+          from._internal_close_extension_satellite());
       break;
     }
     case kKeyEvent: {
@@ -5263,6 +5458,279 @@ const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*Reload::GetClassData() const {
 
 // ===================================================================
 
+class OpenExtensionSatellite::_Internal {
+ public:
+};
+
+OpenExtensionSatellite::OpenExtensionSatellite(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:gameoverlay.cef.OpenExtensionSatellite)
+}
+OpenExtensionSatellite::OpenExtensionSatellite(const OpenExtensionSatellite& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  OpenExtensionSatellite* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.extension_id_){}
+    , decltype(_impl_.kind_){}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.extension_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.extension_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_extension_id().empty()) {
+    _this->_impl_.extension_id_.Set(from._internal_extension_id(), 
+      _this->GetArenaForAllocation());
+  }
+  _this->_impl_.kind_ = from._impl_.kind_;
+  // @@protoc_insertion_point(copy_constructor:gameoverlay.cef.OpenExtensionSatellite)
+}
+
+inline void OpenExtensionSatellite::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.extension_id_){}
+    , decltype(_impl_.kind_){0}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+  _impl_.extension_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.extension_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+}
+
+OpenExtensionSatellite::~OpenExtensionSatellite() {
+  // @@protoc_insertion_point(destructor:gameoverlay.cef.OpenExtensionSatellite)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void OpenExtensionSatellite::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.extension_id_.Destroy();
+}
+
+void OpenExtensionSatellite::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void OpenExtensionSatellite::Clear() {
+// @@protoc_insertion_point(message_clear_start:gameoverlay.cef.OpenExtensionSatellite)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.extension_id_.ClearToEmpty();
+  _impl_.kind_ = 0;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* OpenExtensionSatellite::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // string extension_id = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_extension_id();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "gameoverlay.cef.OpenExtensionSatellite.extension_id"));
+        } else
+          goto handle_unusual;
+        continue;
+      // .gameoverlay.cef.ExtensionSatelliteKind kind = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 16)) {
+          uint64_t val = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint64(&ptr);
+          CHK_(ptr);
+          _internal_set_kind(static_cast<::gameoverlay::cef::ExtensionSatelliteKind>(val));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* OpenExtensionSatellite::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:gameoverlay.cef.OpenExtensionSatellite)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string extension_id = 1;
+  if (!this->_internal_extension_id().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_extension_id().data(), static_cast<int>(this->_internal_extension_id().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "gameoverlay.cef.OpenExtensionSatellite.extension_id");
+    target = stream->WriteStringMaybeAliased(
+        1, this->_internal_extension_id(), target);
+  }
+
+  // .gameoverlay.cef.ExtensionSatelliteKind kind = 2;
+  if (this->_internal_kind() != 0) {
+    target = stream->EnsureSpace(target);
+    target = ::_pbi::WireFormatLite::WriteEnumToArray(
+      2, this->_internal_kind(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:gameoverlay.cef.OpenExtensionSatellite)
+  return target;
+}
+
+size_t OpenExtensionSatellite::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:gameoverlay.cef.OpenExtensionSatellite)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // string extension_id = 1;
+  if (!this->_internal_extension_id().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_extension_id());
+  }
+
+  // .gameoverlay.cef.ExtensionSatelliteKind kind = 2;
+  if (this->_internal_kind() != 0) {
+    total_size += 1 +
+      ::_pbi::WireFormatLite::EnumSize(this->_internal_kind());
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData OpenExtensionSatellite::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    OpenExtensionSatellite::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*OpenExtensionSatellite::GetClassData() const { return &_class_data_; }
+
+
+void OpenExtensionSatellite::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<OpenExtensionSatellite*>(&to_msg);
+  auto& from = static_cast<const OpenExtensionSatellite&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:gameoverlay.cef.OpenExtensionSatellite)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (!from._internal_extension_id().empty()) {
+    _this->_internal_set_extension_id(from._internal_extension_id());
+  }
+  if (from._internal_kind() != 0) {
+    _this->_internal_set_kind(from._internal_kind());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void OpenExtensionSatellite::CopyFrom(const OpenExtensionSatellite& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:gameoverlay.cef.OpenExtensionSatellite)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool OpenExtensionSatellite::IsInitialized() const {
+  return true;
+}
+
+void OpenExtensionSatellite::InternalSwap(OpenExtensionSatellite* other) {
+  using std::swap;
+  auto* lhs_arena = GetArenaForAllocation();
+  auto* rhs_arena = other->GetArenaForAllocation();
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.extension_id_, lhs_arena,
+      &other->_impl_.extension_id_, rhs_arena
+  );
+  swap(_impl_.kind_, other->_impl_.kind_);
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata OpenExtensionSatellite::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
+      file_level_metadata_cef_5fipc_2eproto[16]);
+}
+
+// ===================================================================
+
+class CloseExtensionSatellite::_Internal {
+ public:
+};
+
+CloseExtensionSatellite::CloseExtensionSatellite(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase(arena, is_message_owned) {
+  // @@protoc_insertion_point(arena_constructor:gameoverlay.cef.CloseExtensionSatellite)
+}
+CloseExtensionSatellite::CloseExtensionSatellite(const CloseExtensionSatellite& from)
+  : ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase() {
+  CloseExtensionSatellite* const _this = this; (void)_this;
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  // @@protoc_insertion_point(copy_constructor:gameoverlay.cef.CloseExtensionSatellite)
+}
+
+
+
+
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData CloseExtensionSatellite::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyImpl,
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeImpl,
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*CloseExtensionSatellite::GetClassData() const { return &_class_data_; }
+
+
+
+
+
+
+
+::PROTOBUF_NAMESPACE_ID::Metadata CloseExtensionSatellite::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
+      file_level_metadata_cef_5fipc_2eproto[17]);
+}
+
+// ===================================================================
+
 class KeyEvent::_Internal {
  public:
 };
@@ -5623,7 +6091,7 @@ void KeyEvent::InternalSwap(KeyEvent* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata KeyEvent::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[16]);
+      file_level_metadata_cef_5fipc_2eproto[18]);
 }
 
 // ===================================================================
@@ -5963,7 +6431,7 @@ void MouseEvent::InternalSwap(MouseEvent* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata MouseEvent::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[17]);
+      file_level_metadata_cef_5fipc_2eproto[19]);
 }
 
 // ===================================================================
@@ -6273,7 +6741,7 @@ void WheelEvent::InternalSwap(WheelEvent* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata WheelEvent::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[18]);
+      file_level_metadata_cef_5fipc_2eproto[20]);
 }
 
 // ===================================================================
@@ -6451,13 +6919,17 @@ void Ready::InternalSwap(Ready* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata Ready::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[19]);
+      file_level_metadata_cef_5fipc_2eproto[21]);
 }
 
 // ===================================================================
 
 class Paint::_Internal {
  public:
+  using HasBits = decltype(std::declval<Paint>()._impl_._has_bits_);
+  static void set_has_layer(HasBits* has_bits) {
+    (*has_bits)[0] |= 1u;
+  }
 };
 
 Paint::Paint(::PROTOBUF_NAMESPACE_ID::Arena* arena,
@@ -6470,16 +6942,18 @@ Paint::Paint(const Paint& from)
   : ::PROTOBUF_NAMESPACE_ID::Message() {
   Paint* const _this = this; (void)_this;
   new (&_impl_) Impl_{
-      decltype(_impl_.width_){}
+      decltype(_impl_._has_bits_){from._impl_._has_bits_}
+    , /*decltype(_impl_._cached_size_)*/{}
+    , decltype(_impl_.width_){}
     , decltype(_impl_.height_){}
     , decltype(_impl_.nt_handle_){}
     , decltype(_impl_.layout_generation_){}
-    , /*decltype(_impl_._cached_size_)*/{}};
+    , decltype(_impl_.layer_){}};
 
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   ::memcpy(&_impl_.width_, &from._impl_.width_,
-    static_cast<size_t>(reinterpret_cast<char*>(&_impl_.layout_generation_) -
-    reinterpret_cast<char*>(&_impl_.width_)) + sizeof(_impl_.layout_generation_));
+    static_cast<size_t>(reinterpret_cast<char*>(&_impl_.layer_) -
+    reinterpret_cast<char*>(&_impl_.width_)) + sizeof(_impl_.layer_));
   // @@protoc_insertion_point(copy_constructor:gameoverlay.cef.Paint)
 }
 
@@ -6488,11 +6962,13 @@ inline void Paint::SharedCtor(
   (void)arena;
   (void)is_message_owned;
   new (&_impl_) Impl_{
-      decltype(_impl_.width_){0u}
+      decltype(_impl_._has_bits_){}
+    , /*decltype(_impl_._cached_size_)*/{}
+    , decltype(_impl_.width_){0u}
     , decltype(_impl_.height_){0u}
     , decltype(_impl_.nt_handle_){uint64_t{0u}}
     , decltype(_impl_.layout_generation_){0u}
-    , /*decltype(_impl_._cached_size_)*/{}
+    , decltype(_impl_.layer_){0u}
   };
 }
 
@@ -6522,11 +6998,14 @@ void Paint::Clear() {
   ::memset(&_impl_.width_, 0, static_cast<size_t>(
       reinterpret_cast<char*>(&_impl_.layout_generation_) -
       reinterpret_cast<char*>(&_impl_.width_)) + sizeof(_impl_.layout_generation_));
+  _impl_.layer_ = 0u;
+  _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
 const char* Paint::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  _Internal::HasBits has_bits{};
   while (!ctx->Done(&ptr)) {
     uint32_t tag;
     ptr = ::_pbi::ReadTag(ptr, &tag);
@@ -6563,6 +7042,15 @@ const char* Paint::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
         } else
           goto handle_unusual;
         continue;
+      // optional uint32 layer = 5;
+      case 5:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 40)) {
+          _Internal::set_has_layer(&has_bits);
+          _impl_.layer_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint32(&ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
       default:
         goto handle_unusual;
     }  // switch
@@ -6579,6 +7067,7 @@ const char* Paint::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
     CHK_(ptr != nullptr);
   }  // while
 message_done:
+  _impl_._has_bits_.Or(has_bits);
   return ptr;
 failure:
   ptr = nullptr;
@@ -6614,6 +7103,12 @@ uint8_t* Paint::_InternalSerialize(
   if (this->_internal_layout_generation() != 0) {
     target = stream->EnsureSpace(target);
     target = ::_pbi::WireFormatLite::WriteUInt32ToArray(4, this->_internal_layout_generation(), target);
+  }
+
+  // optional uint32 layer = 5;
+  if (_internal_has_layer()) {
+    target = stream->EnsureSpace(target);
+    target = ::_pbi::WireFormatLite::WriteUInt32ToArray(5, this->_internal_layer(), target);
   }
 
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
@@ -6652,6 +7147,12 @@ size_t Paint::ByteSizeLong() const {
     total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(this->_internal_layout_generation());
   }
 
+  // optional uint32 layer = 5;
+  cached_has_bits = _impl_._has_bits_[0];
+  if (cached_has_bits & 0x00000001u) {
+    total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(this->_internal_layer());
+  }
+
   return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
 }
 
@@ -6682,6 +7183,9 @@ void Paint::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF
   if (from._internal_layout_generation() != 0) {
     _this->_internal_set_layout_generation(from._internal_layout_generation());
   }
+  if (from._internal_has_layer()) {
+    _this->_internal_set_layer(from._internal_layer());
+  }
   _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
 }
 
@@ -6699,9 +7203,10 @@ bool Paint::IsInitialized() const {
 void Paint::InternalSwap(Paint* other) {
   using std::swap;
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::PROTOBUF_NAMESPACE_ID::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(Paint, _impl_.layout_generation_)
-      + sizeof(Paint::_impl_.layout_generation_)
+      PROTOBUF_FIELD_OFFSET(Paint, _impl_.layer_)
+      + sizeof(Paint::_impl_.layer_)
       - PROTOBUF_FIELD_OFFSET(Paint, _impl_.width_)>(
           reinterpret_cast<char*>(&_impl_.width_),
           reinterpret_cast<char*>(&other->_impl_.width_));
@@ -6710,7 +7215,7 @@ void Paint::InternalSwap(Paint* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata Paint::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[20]);
+      file_level_metadata_cef_5fipc_2eproto[22]);
 }
 
 // ===================================================================
@@ -6913,7 +7418,7 @@ void PaintError::InternalSwap(PaintError* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata PaintError::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[21]);
+      file_level_metadata_cef_5fipc_2eproto[23]);
 }
 
 // ===================================================================
@@ -7250,7 +7755,7 @@ void NavState::InternalSwap(NavState* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata NavState::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[22]);
+      file_level_metadata_cef_5fipc_2eproto[24]);
 }
 
 // ===================================================================
@@ -7536,7 +8041,7 @@ void HostUiAction::InternalSwap(HostUiAction* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata HostUiAction::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[23]);
+      file_level_metadata_cef_5fipc_2eproto[25]);
 }
 
 // ===================================================================
@@ -7866,7 +8371,7 @@ void BridgeInvoke::InternalSwap(BridgeInvoke* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata BridgeInvoke::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[24]);
+      file_level_metadata_cef_5fipc_2eproto[26]);
 }
 
 // ===================================================================
@@ -8179,7 +8684,7 @@ void BridgeResult::InternalSwap(BridgeResult* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata BridgeResult::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[25]);
+      file_level_metadata_cef_5fipc_2eproto[27]);
 }
 
 // ===================================================================
@@ -8382,7 +8887,7 @@ void BridgePush::InternalSwap(BridgePush* other) {
 ::PROTOBUF_NAMESPACE_ID::Metadata BridgePush::GetMetadata() const {
   return ::_pbi::AssignDescriptors(
       &descriptor_table_cef_5fipc_2eproto_getter, &descriptor_table_cef_5fipc_2eproto_once,
-      file_level_metadata_cef_5fipc_2eproto[26]);
+      file_level_metadata_cef_5fipc_2eproto[28]);
 }
 
 // @@protoc_insertion_point(namespace_scope)
@@ -8452,6 +8957,14 @@ Arena::CreateMaybeMessage< ::gameoverlay::cef::GoForward >(Arena* arena) {
 template<> PROTOBUF_NOINLINE ::gameoverlay::cef::Reload*
 Arena::CreateMaybeMessage< ::gameoverlay::cef::Reload >(Arena* arena) {
   return Arena::CreateMessageInternal< ::gameoverlay::cef::Reload >(arena);
+}
+template<> PROTOBUF_NOINLINE ::gameoverlay::cef::OpenExtensionSatellite*
+Arena::CreateMaybeMessage< ::gameoverlay::cef::OpenExtensionSatellite >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::gameoverlay::cef::OpenExtensionSatellite >(arena);
+}
+template<> PROTOBUF_NOINLINE ::gameoverlay::cef::CloseExtensionSatellite*
+Arena::CreateMaybeMessage< ::gameoverlay::cef::CloseExtensionSatellite >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::gameoverlay::cef::CloseExtensionSatellite >(arena);
 }
 template<> PROTOBUF_NOINLINE ::gameoverlay::cef::KeyEvent*
 Arena::CreateMaybeMessage< ::gameoverlay::cef::KeyEvent >(Arena* arena) {

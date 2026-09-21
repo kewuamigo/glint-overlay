@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use glint_metrics_etw::{EtwMetricsConsumer, HookedNativeSample};
 use glint_metrics_common::{now_ms, read_metrics_for_pid};
+use glint_metrics_etw::{EtwMetricsConsumer, HookedNativeSample};
 use tracing::info;
 
 #[cfg(windows)]
@@ -24,7 +24,7 @@ fn ensure_admin() -> Result<()> {
 fn is_elevated() -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{
-        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -55,8 +55,8 @@ fn read_hooked_native(target_pid: u32) -> Option<HookedNativeSample> {
 
     // Module-scan freshness is tracked separately from the Present hook so the
     // DLSS/FSR label survives even when the hook is not counting frames.
-    let fg_kind_fresh = block.fg_updated_at_ms > 0
-        && now.saturating_sub(block.fg_updated_at_ms) <= 2_500;
+    let fg_kind_fresh =
+        block.fg_updated_at_ms > 0 && now.saturating_sub(block.fg_updated_at_ms) <= 2_500;
 
     let hook_fresh = now.saturating_sub(block.updated_at_ms) <= 2_500;
     let fps = f64::from(block.native_fps);
@@ -107,8 +107,7 @@ struct Cli {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();

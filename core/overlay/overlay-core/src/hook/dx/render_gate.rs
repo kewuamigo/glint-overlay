@@ -32,7 +32,52 @@ pub fn adopt_renderer(
         }
         None => {
             *active = Some(target);
-            DrawGate::Adopted
+            DrawGate::Draw
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DrawGate, adopt_renderer};
+    use crate::backend::render::Renderer;
+
+    #[test]
+    fn adopt_none_is_draw() {
+        let mut active = None;
+        assert_eq!(
+            adopt_renderer(&mut active, Renderer::Dx12, &[]),
+            DrawGate::Draw
+        );
+        assert_eq!(active, Some(Renderer::Dx12));
+    }
+
+    #[test]
+    fn adopt_already_target_is_draw() {
+        let mut active = Some(Renderer::Dx12);
+        assert_eq!(
+            adopt_renderer(&mut active, Renderer::Dx12, &[]),
+            DrawGate::Draw
+        );
+    }
+
+    #[test]
+    fn adopt_other_api_is_ignored() {
+        let mut active = Some(Renderer::Dx11);
+        assert_eq!(
+            adopt_renderer(&mut active, Renderer::Dx12, &[]),
+            DrawGate::Ignored
+        );
+        assert_eq!(active, Some(Renderer::Dx11));
+    }
+
+    #[test]
+    fn adopt_migrate_from_stays_adopted() {
+        let mut active = Some(Renderer::Opengl);
+        assert_eq!(
+            adopt_renderer(&mut active, Renderer::Dx12, &[Renderer::Opengl]),
+            DrawGate::Adopted
+        );
+        assert_eq!(active, Some(Renderer::Dx12));
     }
 }

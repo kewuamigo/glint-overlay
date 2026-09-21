@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
+use glint_injector::{default_metrics_dll, inject_metrics_dll};
 use glint_integration_tests::{
     attach_spinning_cube_overlay, skip_unless_integration, wait_for_window_added,
 };
-use glint_injector::{default_metrics_dll, inject_metrics_dll};
 use glint_metrics_common::read_metrics_for_pid;
 
 #[tokio::test]

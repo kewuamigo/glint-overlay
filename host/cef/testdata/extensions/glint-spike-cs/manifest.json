@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Glint Spike Content Script",
+  "version": "1.0.0",
+  "description": "QA-only MV3 content-script spike for Glint BrowserExtensions load path. No action/popup.",
+  "content_scripts": [
+    {
+      "matches": ["https://example.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -93,9 +93,6 @@ pub fn write_startup_error(err: &anyhow::Error) -> Result<()> {
     let path = dir.join("launcher-startup-error.log");
     let mut file = fs::File::create(&path)?;
     writeln!(file, "Launcher failed: {err:#}")?;
-    writeln!(
-        file,
-        "Hint: run from the repo root after .\\build-all.ps1"
-    )?;
+    writeln!(file, "Hint: run from the repo root after .\\build-all.ps1")?;
     Ok(())
 }

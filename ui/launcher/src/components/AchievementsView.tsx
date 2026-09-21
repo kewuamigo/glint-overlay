@@ -3,10 +3,12 @@ import { motion } from 'framer-motion';
 import {
   launcherInvoke,
   type GameArt,
+  type PrepareState,
   type ScannedGame,
 } from '../launcher-bridge';
 import { gameAccent } from '../lib/gameVisual';
 import { ProgressRing } from './ProgressRing';
+import { PrepareFailedBanner, PrepareProgress } from './PrepareFailedBanner';
 
 type AchievementRow = {
   achievement_id: string;
@@ -25,9 +27,22 @@ type EmuGuide = {
 type Props = {
   games: ScannedGame[];
   covers: Record<string, GameArt>;
+  prepareStatuses?: Record<string, PrepareState>;
+  forcingGse?: Record<string, true>;
+  onRetryPrepare?: (
+    game: ScannedGame,
+    steamAppId?: string,
+    forceGse?: boolean,
+  ) => void;
 };
 
-export function AchievementsView({ games, covers }: Props) {
+export function AchievementsView({
+  games,
+  covers,
+  prepareStatuses,
+  forcingGse,
+  onRetryPrepare,
+}: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [rows, setRows] = useState<AchievementRow[]>([]);
   const [guide, setGuide] = useState<EmuGuide | null>(null);
@@ -79,6 +94,11 @@ export function AchievementsView({ games, covers }: Props) {
 
   const unlocked = rows.filter((r) => r.unlocked).length;
   const selectedGame = games.find((g) => g.id === selected) ?? null;
+  const selectedPrepare = selectedGame
+    ? prepareStatuses?.[selectedGame.id]
+    : undefined;
+  const selectedPreparing = selectedPrepare?.status === 'pending';
+  const selectedFailed = selectedPrepare?.status === 'failed';
   const pct = rows.length > 0 ? Math.round((unlocked / rows.length) * 100) : 0;
   const hero = selectedGame ? covers[selectedGame.id]?.hero : undefined;
   const accent = selectedGame ? gameAccent(selectedGame.name) : null;
@@ -156,7 +176,21 @@ export function AchievementsView({ games, covers }: Props) {
                 <div className="achievements-showcase-body">
                   <ProgressRing pct={pct} size={88} />
                   <div>
-                    <span className="pill">{selectedGame.source}</span>
+                    <div className="achievements-showcase-actions">
+                      <span className="pill">{selectedGame.source}</span>
+                      {onRetryPrepare && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={selectedPreparing}
+                          onClick={() =>
+                            onRetryPrepare(selectedGame, undefined, true)
+                          }
+                        >
+                          {selectedPreparing ? 'Installing…' : 'Install GSE'}
+                        </button>
+                      )}
+                    </div>
                     <h2>{selectedGame.name}</h2>
                     <p>
                       {rows.length > 0
@@ -171,6 +205,19 @@ export function AchievementsView({ games, covers }: Props) {
                         transition={{ duration: 0.55, ease: 'easeOut' }}
                       />
                     </div>
+                    {selectedPreparing && (
+                      <PrepareProgress
+                        forceGse={Boolean(forcingGse?.[selectedGame.id])}
+                      />
+                    )}
+                    {selectedFailed && onRetryPrepare && (
+                      <PrepareFailedBanner
+                        prepare={selectedPrepare}
+                        game={selectedGame}
+                        errorClassName="cloud-sync-status-line"
+                        onRetry={onRetryPrepare}
+                      />
+                    )}
                   </div>
                 </div>
               </div>

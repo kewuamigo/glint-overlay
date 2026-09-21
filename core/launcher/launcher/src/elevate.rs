@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 pub fn is_elevated() -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{
-        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -40,13 +40,11 @@ pub fn is_elevated() -> bool {
 pub fn run_elevated(args: &[String]) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
 
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
-    use windows::Win32::UI::Shell::{
-        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
-    };
+    use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
     use windows::Win32::UI::WindowsAndMessaging::SW_NORMAL;
+    use windows::core::PCWSTR;
 
     let exe = std::env::current_exe().context("current_exe failed")?;
     let exe_wide: Vec<u16> = exe

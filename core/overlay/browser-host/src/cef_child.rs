@@ -7,10 +7,11 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use glint_cef_protocol::{
-    BridgePush, BridgeResult, ContentNavigate, CreateSession, Envelope, GoBack, GoForward,
-    HelloAck, HostUiActionKind, KeyEvent, MSG_PROTO, MouseEvent, PROTOCOL_VERSION, Paint,
-    ProtocolVersion, Reload, SessionMode, SetContentRect, SetFocus, SetInnerBounds, SetSurfaceSize,
-    Shutdown, WheelEvent, decode_envelope, encode_envelope, envelope::Body,
+    BridgePush, BridgeResult, CloseExtensionSatellite, ContentNavigate, CreateSession, Envelope,
+    GoBack, GoForward, HelloAck, HostUiActionKind, KeyEvent, MSG_PROTO, MouseEvent,
+    OpenExtensionSatellite, PROTOCOL_VERSION, Paint, ProtocolVersion, Reload, SessionMode,
+    SetContentRect, SetFocus, SetInnerBounds, SetSurfaceSize, Shutdown, WheelEvent,
+    decode_envelope, encode_envelope, envelope::Body,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -28,14 +29,19 @@ pub struct CefShare {
 
 #[derive(Debug)]
 pub enum CefEvent {
-    Ready { chrome_top_px: u32 },
+    Ready {
+        chrome_top_px: u32,
+    },
     Paint {
         w: u32,
         h: u32,
         handle: u64,
         layout_generation: u32,
+        layer: Option<u32>,
     },
-    PaintError { msg: String },
+    PaintError {
+        msg: String,
+    },
     Host(HostAction),
     NavState {
         url: String,
@@ -74,7 +80,12 @@ impl CefSession {
         let port = listener.local_addr()?.port();
         let cwd = exe.parent().context("cef exe has no parent dir")?;
 
-        info!(?exe, port, parent_pid = share.parent_pid, "starting CEF helper");
+        info!(
+            ?exe,
+            port,
+            parent_pid = share.parent_pid,
+            "starting CEF helper"
+        );
 
         let mut cmd = Command::new(&exe);
         cmd.args([
@@ -230,11 +241,7 @@ impl CefSession {
     /// Give/remove render-widget focus on one OSR browser. Without this the
     /// widget never becomes active, so Blink has no focused frame and keyboard
     /// events have nothing to land on.
-    pub async fn set_focus(
-        &mut self,
-        focus: bool,
-        target: CefFocusTarget,
-    ) -> anyhow::Result<()> {
+    pub async fn set_focus(&mut self, focus: bool, target: CefFocusTarget) -> anyhow::Result<()> {
         self.send_envelope(make_env(Body::SetFocus(SetFocus {
             focus,
             target: target as i32,
@@ -284,6 +291,29 @@ impl CefSession {
 
     pub async fn reload(&mut self) -> anyhow::Result<()> {
         self.send_envelope(make_env(Body::Reload(Reload {}))).await
+    }
+
+    /// Open Chrome-style extension satellite (options / popup). Never converts content_.
+    pub async fn open_extension_satellite(
+        &mut self,
+        extension_id: String,
+        kind: ExtensionSatelliteKind,
+    ) -> anyhow::Result<()> {
+        self.send_envelope(make_env(Body::OpenExtensionSatellite(
+            OpenExtensionSatellite {
+                extension_id,
+                kind: kind as i32,
+            },
+        )))
+        .await
+    }
+
+    /// Close the Chrome-style extension satellite if any (OSR untouched).
+    pub async fn close_extension_satellite(&mut self) -> anyhow::Result<()> {
+        self.send_envelope(make_env(Body::CloseExtensionSatellite(
+            CloseExtensionSatellite {},
+        )))
+        .await
     }
 
     /// Settle one `__goHost.invoke`. `result_json` is a JSON value ("" = undefined).
@@ -340,10 +370,7 @@ fn make_env(body: Body) -> Envelope {
     }
 }
 
-async fn write_envelope(
-    writer: &Mutex<OwnedWriteHalf>,
-    env: &Envelope,
-) -> anyhow::Result<()> {
+async fn write_envelope(writer: &Mutex<OwnedWriteHalf>, env: &Envelope) -> anyhow::Result<()> {
     let payload = encode_envelope(env).context("encode Envelope")?;
     let mut frame = Vec::with_capacity(4 + 1 + payload.len());
     let len = (1 + payload.len()) as u32;
@@ -409,19 +436,13 @@ async fn handle_frame(
     }
     let env = decode_envelope(&payload[1..]).context("decode Envelope")?;
     if env.protocol_version != ProtocolVersion::ProtocolVersion1 as i32 {
-        bail!(
-            "unsupported CEF protocol_version={}",
-            env.protocol_version
-        );
+        bail!("unsupported CEF protocol_version={}", env.protocol_version);
     }
     match env.body {
         Some(Body::Hello(_)) => {
-            write_envelope(
-                writer,
-                &make_env(Body::HelloAck(HelloAck {})),
-            )
-            .await
-            .context("send HelloAck")?;
+            write_envelope(writer, &make_env(Body::HelloAck(HelloAck {})))
+                .await
+                .context("send HelloAck")?;
             Ok(None)
         }
         Some(Body::Ready(r)) => Ok(Some(CefEvent::Ready {
@@ -432,6 +453,7 @@ async fn handle_frame(
             height,
             nt_handle,
             layout_generation,
+            layer,
         })) => {
             if width == 0 || height == 0 {
                 return Ok(None);
@@ -441,6 +463,7 @@ async fn handle_frame(
                 h: height,
                 handle: nt_handle,
                 layout_generation,
+                layer,
             }))
         }
         Some(Body::PaintError(e)) => Ok(Some(CefEvent::PaintError {
@@ -490,6 +513,8 @@ async fn handle_frame(
         | Some(Body::GoBack(_))
         | Some(Body::GoForward(_))
         | Some(Body::Reload(_))
+        | Some(Body::OpenExtensionSatellite(_))
+        | Some(Body::CloseExtensionSatellite(_))
         | Some(Body::BridgeResult(_))
         | Some(Body::BridgePush(_))
         | Some(Body::KeyEvent(_))
@@ -556,17 +581,13 @@ impl SessionDocument {
 }
 
 /// Requires `GLINT_UI_URL` (launcher always sets `ui/shell/dist`).
-pub fn resolve_session_document(
-    shell_url: Option<String>,
-) -> anyhow::Result<SessionDocument> {
-    let value = shell_url
-        .filter(|u| !u.trim().is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "GLINT_UI_URL required (path to ui/shell/dist). \
+pub fn resolve_session_document(shell_url: Option<String>) -> anyhow::Result<SessionDocument> {
+    let value = shell_url.filter(|u| !u.trim().is_empty()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "GLINT_UI_URL required (path to ui/shell/dist). \
                  Attach via the launcher — cef/ui fallback was removed."
-            )
-        })?;
+        )
+    })?;
     shell_document_url(&value).map(SessionDocument::Shell)
 }
 
@@ -607,4 +628,5 @@ fn path_to_file_url(path: &Path) -> String {
 }
 
 // Re-export FocusTarget for main input routing.
+pub use glint_cef_protocol::ExtensionSatelliteKind;
 pub use glint_cef_protocol::FocusTarget as CefFocusTarget;

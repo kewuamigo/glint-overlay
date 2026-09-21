@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import type { GameArt, ScannedGame, StoreCatalog } from '../launcher-bridge';
-import { launcherInvoke } from '../launcher-bridge';
+import {
+  launcherInvoke,
+  prepareBlocksLaunch,
+  type GameArt,
+  type PrepareState,
+  type ScannedGame,
+  type StoreCatalog,
+} from '../launcher-bridge';
 import { gameAccent, formatPlaytime, formatSource } from '../lib/gameVisual';
 import { useCloudSyncPlayState } from '../hooks/useCloudSyncPlayState';
 import {
@@ -11,18 +17,23 @@ import {
 } from '../data/mockFriends';
 import { FriendRail } from './FriendList';
 import { ProgressRing } from './ProgressRing';
+import { PrepareFailedBanner, PrepareProgress } from './PrepareFailedBanner';
+import { ArtMedia } from './ArtMedia';
+import { ArtGearButton } from './ArtPickerModal';
 
 function HomePlayButton({
   gameId,
   launching,
+  blocked,
   onPlay,
 }: {
   gameId: string;
   launching: boolean;
+  blocked: boolean;
   onPlay: () => void;
 }) {
   const { syncing } = useCloudSyncPlayState(gameId);
-  const busy = launching || syncing;
+  const busy = launching || syncing || blocked;
   const label = syncing ? 'Syncing…' : launching ? 'Starting…' : 'Play';
   return (
     <motion.button
@@ -56,38 +67,56 @@ type Props = {
   games: ScannedGame[];
   featured: ScannedGame | null;
   launching: string | null;
+  prepareStatuses: Record<string, PrepareState>;
   covers: Record<string, GameArt>;
   catalog: StoreCatalog | null;
   isFavorite: (id: string) => boolean;
   onToggleFavorite: (id: string) => void;
   onAttach: (game: ScannedGame) => void;
   onPlay: (game: ScannedGame) => void;
+  onRetryPrepare: (game: ScannedGame, steamAppId?: string, forceGse?: boolean) => void;
   onSelectGame: (game: ScannedGame) => void;
   onOpenLibrary: () => void;
   onOpenStore: () => void;
   onOpenAchievements: () => void;
   onSelectFriend: (friend: MockFriend) => void;
+  onCustomizeArt?: (game: ScannedGame) => void;
+  forcingGse?: boolean;
 };
 
 export function HomeView({
   games,
   featured,
   launching,
+  prepareStatuses,
   covers,
   catalog,
   isFavorite,
   onToggleFavorite,
   onAttach,
   onPlay,
+  onRetryPrepare,
   onSelectGame,
   onOpenLibrary,
   onOpenStore,
   onOpenAchievements,
   onSelectFriend,
+  onCustomizeArt,
+  forcingGse,
 }: Props) {
   const feat = featured ? gameAccent(featured.name) : null;
   const featuredHero = featured ? covers[featured.id]?.hero : undefined;
+  const featuredHeroMime = featured ? covers[featured.id]?.heroMime : undefined;
+  const featuredLogo = featured ? covers[featured.id]?.logo : undefined;
+  const featuredLogoMime = featured ? covers[featured.id]?.logoMime : undefined;
   const featuredPlay = featured ? formatPlaytime(featured.playtime_hours) : null;
+  const featuredPrepare = featured
+    ? prepareStatuses[featured.id]
+    : undefined;
+  const featuredCreating =
+    featured != null &&
+    (!featuredPrepare || featuredPrepare.status === 'pending');
+  const featuredFailed = featuredPrepare?.status === 'failed';
   const railGames = games.slice(0, 6);
   const discoverGames = games.slice(0, 6);
   const catalogApps = catalog?.apps?.slice(0, 4) ?? [];
@@ -107,7 +136,12 @@ export function HomeView({
   ].slice(0, 4);
 
   const [teaserRows, setTeaserRows] = useState<AchievementRow[]>([]);
+  const [logoFailed, setLogoFailed] = useState(false);
   const teaserGame = featured ?? games[0] ?? null;
+
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [featuredLogo]);
 
   useEffect(() => {
     if (!teaserGame) {
@@ -150,7 +184,12 @@ export function HomeView({
           }
         >
           {featuredHero && (
-            <img className="home-stage-cover" src={featuredHero} alt="" />
+            <ArtMedia
+              className="home-stage-cover"
+              src={featuredHero}
+              mime={featuredHeroMime}
+              alt=""
+            />
           )}
           <div className="home-stage-shade" />
         </div>
@@ -162,7 +201,17 @@ export function HomeView({
                 <span className={`pill${featured.running ? ' pill-live' : ''}`}>
                   {featured.running ? 'Now Playing' : formatSource(featured.source)}
                 </span>
-                <h1 className="home-hero-name">{featured.name}</h1>
+                {featuredLogo && !logoFailed ? (
+                  <ArtMedia
+                    className="home-hero-logo"
+                    src={featuredLogo}
+                    mime={featuredLogoMime}
+                    alt={featured.name}
+                    onError={() => setLogoFailed(true)}
+                  />
+                ) : (
+                  <h1 className="home-hero-name">{featured.name}</h1>
+                )}
                 <p className="home-hero-meta">
                   {formatSource(featured.source)}
                   {featuredPlay ? ` · ${featuredPlay} played` : ''}
@@ -190,9 +239,26 @@ export function HomeView({
                     <HomePlayButton
                       gameId={featured.id}
                       launching={launching === featured.id}
+                      blocked={prepareBlocksLaunch(featuredPrepare)}
                       onPlay={() => onPlay(featured)}
                     />
                   )}
+                  {featuredFailed && !featured.running && (
+                    <PrepareFailedBanner
+                      prepare={featuredPrepare}
+                      game={featured}
+                      errorClassName="error-banner"
+                      onRetry={onRetryPrepare}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={featured.running || featuredCreating}
+                    onClick={() => onRetryPrepare(featured, undefined, true)}
+                  >
+                    {featuredCreating ? 'Installing…' : 'Install GSE'}
+                  </button>
                   <button
                     type="button"
                     className={`btn-ghost${isFavorite(featured.id) ? ' is-favorite' : ''}`}
@@ -200,7 +266,13 @@ export function HomeView({
                   >
                     {isFavorite(featured.id) ? '★ Favorited' : '☆ Add to Favorite'}
                   </button>
+                  {onCustomizeArt && (
+                    <ArtGearButton onClick={() => onCustomizeArt(featured)} />
+                  )}
                 </div>
+                {featuredCreating && !featured.running && (
+                  <PrepareProgress forceGse={forcingGse} />
+                )}
               </>
             ) : (
               <div className="home-empty">

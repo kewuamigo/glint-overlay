@@ -5,6 +5,7 @@ use crate::{
         self,
         types::{GLint, GLuint},
     },
+    util::{MailboxSample, mailbox_sample, with_keyed_mutex_sampled},
     wgl,
 };
 use anyhow::{Context, bail};
@@ -19,7 +20,7 @@ use windows::{
                 DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R16G16B16A16_FLOAT,
                 DXGI_FORMAT_R16G16B16A16_UNORM,
             },
-            IDXGIResource,
+            IDXGIKeyedMutex, IDXGIResource,
         },
     },
     core::Interface,
@@ -105,6 +106,7 @@ impl OpenglRenderer {
         position: (i32, i32),
         size: (u32, u32),
         screen: (u32, u32),
+        mutex: Option<&IDXGIKeyedMutex>,
     ) -> anyhow::Result<()> {
         if screen.0 == 0 || screen.1 == 0 {
             return Ok(());
@@ -120,30 +122,35 @@ impl OpenglRenderer {
             (size.0 as f32 / screen.0 as f32) * 2.0,
             -(size.1 as f32 / screen.1 as f32) * 2.0,
         ];
-        unsafe {
-            gl::Viewport(0, 0, screen.0 as _, screen.1 as _);
+        with_keyed_mutex_sampled(mutex, |lock_held| {
+            if mailbox_sample(lock_held, false) != MailboxSample::Live {
+                return;
+            }
+            unsafe {
+                gl::Viewport(0, 0, screen.0 as _, screen.1 as _);
 
-            gl::Enable(gl::BLEND);
-            gl::BlendEquation(gl::FUNC_ADD);
-            gl::BlendFuncSeparate(
-                gl::SRC_ALPHA,
-                gl::ONE_MINUS_SRC_ALPHA,
-                gl::ONE,
-                gl::ONE_MINUS_SRC_ALPHA,
-            );
-            gl::Disable(gl::CULL_FACE);
-            gl::Disable(gl::DEPTH_TEST);
-            gl::Disable(gl::STENCIL_TEST);
+                gl::Enable(gl::BLEND);
+                gl::BlendEquation(gl::FUNC_ADD);
+                gl::BlendFuncSeparate(
+                    gl::SRC_ALPHA,
+                    gl::ONE_MINUS_SRC_ALPHA,
+                    gl::ONE,
+                    gl::ONE_MINUS_SRC_ALPHA,
+                );
+                gl::Disable(gl::CULL_FACE);
+                gl::Disable(gl::DEPTH_TEST);
+                gl::Disable(gl::STENCIL_TEST);
 
-            gl::UseProgram(self.program);
-            gl::Uniform4f(self.rect_loc, rect[0], rect[1], rect[2], rect[3]);
-            gl::Uniform1i(self.tex_loc, 0);
+                gl::UseProgram(self.program);
+                gl::Uniform4f(self.rect_loc, rect[0], rect[1], rect[2], rect[3]);
+                gl::Uniform1i(self.tex_loc, 0);
 
-            gl::ActiveTexture(gl::TEXTURE0);
-            texture.bind(gl::TEXTURE_2D, || {
-                gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
-            });
-        }
+                gl::ActiveTexture(gl::TEXTURE0);
+                texture.bind(gl::TEXTURE_2D, || {
+                    gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+                });
+            }
+        })?;
 
         Ok(())
     }

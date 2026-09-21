@@ -8,12 +8,13 @@ use crate::plugin_db;
 use crate::plugin_fs;
 use crate::plugin_saves;
 use crate::plugin_storage;
-use glint_metrics_common::{read_metrics_for_pid, MetricsBlock};
+use glint_metrics_common::{
+    MetricsBlock, frame_gen_active, frame_gen_kind_label, read_metrics_for_pid, snapshot_fps,
+};
 use serde_json::Value;
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::core::PWSTR;
 
@@ -31,6 +32,7 @@ pub fn needs_host_session(method: &str) -> bool {
             | "native.overlay.listenInput"
             | "native.overlay.blockInput"
             | "native.overlay.setBlockingCursor"
+            | "native.overlay.setShellDrag"
             | "browser.focus"
             | "browser.blur"
             | "browser.setContentRect"
@@ -41,8 +43,8 @@ pub fn needs_host_session(method: &str) -> bool {
 
 /// Lookup + permission/privileged gate (no side effects).
 pub fn gate_plugin(plugin_id: &str, method: &str) -> Result<AppAccess, String> {
-    let access = apps::lookup_enabled(plugin_id)
-        .ok_or_else(|| format!("unknown plugin: {plugin_id}"))?;
+    let access =
+        apps::lookup_enabled(plugin_id).ok_or_else(|| format!("unknown plugin: {plugin_id}"))?;
     gate(&access, method)?;
     Ok(access)
 }
@@ -72,6 +74,8 @@ pub fn dispatch(plugin_id: &str, method: &str, args_json: &str) -> Result<String
     let access = gate_plugin(plugin_id, method)?;
     match method {
         "native.metrics.getSnapshot" => metrics_get_snapshot(),
+        "native.metrics.getPrefs" => metrics_get_prefs(),
+        "native.metrics.setPrefs" => metrics_set_prefs(args_json),
         "game.getProcessInfo" => game_get_process_info(),
         m if m.starts_with("game.saves.") => plugin_saves::dispatch(method, args_json),
         m if m.starts_with("achievements.") => {
@@ -87,9 +91,9 @@ pub fn dispatch(plugin_id: &str, method: &str, args_json: &str) -> Result<String
         m if m.starts_with("fs.") => fs_dispatch(plugin_id, &access, method, args_json),
         "shell.openPath" => shell_open_path(plugin_id, &access, args_json),
         // Geometry: no CEF compositor seam — Electron-shaped ack (Option B).
-        "native.overlay.setPosition"
-        | "native.overlay.setAnchor"
-        | "native.overlay.setMargin" => Ok(String::new()),
+        "native.overlay.setPosition" | "native.overlay.setAnchor" | "native.overlay.setMargin" => {
+            Ok(String::new())
+        }
         m if needs_host_session(m) => {
             Err(format!("session method requires host context: {method}"))
         }
@@ -103,8 +107,8 @@ pub async fn dispatch_saves_async(
     method: &str,
     args_json: &str,
 ) -> Result<String, String> {
-    let access = apps::lookup_enabled(plugin_id)
-        .ok_or_else(|| format!("unknown plugin: {plugin_id}"))?;
+    let access =
+        apps::lookup_enabled(plugin_id).ok_or_else(|| format!("unknown plugin: {plugin_id}"))?;
     gate(&access, method)?;
     if !method.starts_with("game.saves.") {
         return Err(format!("not a saves method: {method}"));
@@ -114,8 +118,8 @@ pub async fn dispatch_saves_async(
 
 /// Electron `storage.*`: arg0=key, arg1=value (set). Void → empty JSON (→ JS undefined).
 fn storage_dispatch(plugin_id: &str, method: &str, args_json: &str) -> Result<String, String> {
-    let args: Vec<Value> = serde_json::from_str(args_json)
-        .map_err(|e| format!("invalid storage args: {e}"))?;
+    let args: Vec<Value> =
+        serde_json::from_str(args_json).map_err(|e| format!("invalid storage args: {e}"))?;
     let key = match args.first() {
         Some(Value::String(s)) => s.clone(),
         Some(v) => v.to_string(),
@@ -139,8 +143,8 @@ fn storage_dispatch(plugin_id: &str, method: &str, args_json: &str) -> Result<St
 
 /// Electron `db.*`: arg0=sql, arg1=params[].
 fn db_dispatch(plugin_id: &str, method: &str, args_json: &str) -> Result<String, String> {
-    let args: Vec<Value> = serde_json::from_str(args_json)
-        .map_err(|e| format!("invalid db args: {e}"))?;
+    let args: Vec<Value> =
+        serde_json::from_str(args_json).map_err(|e| format!("invalid db args: {e}"))?;
     let sql = match args.first() {
         Some(Value::String(s)) => s.as_str(),
         Some(v) => {
@@ -169,8 +173,8 @@ fn fs_dispatch(
     method: &str,
     args_json: &str,
 ) -> Result<String, String> {
-    let args: Vec<Value> = serde_json::from_str(args_json)
-        .map_err(|e| format!("invalid fs args: {e}"))?;
+    let args: Vec<Value> =
+        serde_json::from_str(args_json).map_err(|e| format!("invalid fs args: {e}"))?;
     let path_arg = |i: usize| -> String {
         match args.get(i) {
             Some(Value::String(s)) => s.clone(),
@@ -202,13 +206,9 @@ fn fs_dispatch(
     }
 }
 
-fn shell_open_path(
-    plugin_id: &str,
-    access: &AppAccess,
-    args_json: &str,
-) -> Result<String, String> {
-    let args: Vec<Value> = serde_json::from_str(args_json)
-        .map_err(|e| format!("invalid shell.openPath args: {e}"))?;
+fn shell_open_path(plugin_id: &str, access: &AppAccess, args_json: &str) -> Result<String, String> {
+    let args: Vec<Value> =
+        serde_json::from_str(args_json).map_err(|e| format!("invalid shell.openPath args: {e}"))?;
     let target = match args.first() {
         Some(Value::String(s)) => s.as_str(),
         Some(v) => {
@@ -219,20 +219,29 @@ fn shell_open_path(
     plugin_fs::open_path(plugin_id, access, target)
 }
 
-/// Prefer live ETW snapshot (Electron parity); fall back to Present-hook SHM.
-/// Shared by `getSnapshot` invoke and the ≤1 Hz bridge push (FR-004).
+/// SHM SDK split first; ETW only when SHM `fg_kind` is none and PresentMon
+/// tags say XeFG/AFMF. Shared by `getSnapshot` and the ≤1 Hz bridge push.
 pub fn try_metrics_snapshot() -> Result<serde_json::Value, String> {
-    if let Some(etw) = etw_snapshot_if_live() {
-        return Ok(etw);
-    }
-
     let pid: u32 = std::env::var("GLINT_GAME_PID")
         .map_err(|_| "metrics unavailable: GLINT_GAME_PID not set".to_string())?
         .parse()
         .map_err(|_| "metrics unavailable: invalid GLINT_GAME_PID".to_string())?;
-    let block = read_metrics_for_pid(pid)
-        .ok_or_else(|| format!("metrics unavailable: no shared memory for pid {pid}"))?;
-    Ok(metrics_block_to_json(&block))
+    let block = read_metrics_for_pid(pid);
+    let mut snap = match &block {
+        Some(b) => metrics_block_to_json(b),
+        None => {
+            etw_snapshot_if_live().ok_or_else(|| {
+                format!("metrics unavailable: no shared memory for pid {pid}")
+            })?
+        }
+    };
+    if let Some(b) = &block {
+        if let Some(etw) = etw_snapshot_if_etw_only_fg(b.fg_kind) {
+            snap = etw;
+        }
+    }
+    merge_hw_and_prefs(&mut snap);
+    Ok(snap)
 }
 
 fn etw_snapshot_if_live() -> Option<serde_json::Value> {
@@ -251,8 +260,66 @@ fn etw_snapshot_if_live() -> Option<serde_json::Value> {
     }
 }
 
+fn etw_fallback_kind(shm_fg_kind: u32, etw_kind: &str) -> bool {
+    shm_fg_kind == 0 && matches!(etw_kind, "xefg" | "afmf")
+}
+
+fn etw_snapshot_if_etw_only_fg(shm_fg_kind: u32) -> Option<serde_json::Value> {
+    let v = etw_snapshot_if_live()?;
+    let kind = v.get("frameGenKind").and_then(|x| x.as_str()).unwrap_or("");
+    etw_fallback_kind(shm_fg_kind, kind).then_some(v)
+}
+
+fn merge_hw_and_prefs(snap: &mut serde_json::Value) {
+    let Value::Object(map) = snap else {
+        return;
+    };
+    let hw = crate::hw_monitor::latest();
+    if let Some(v) = hw.gpu_util {
+        map.insert("gpuUtil".into(), json_num(v));
+    }
+    if let Some(v) = hw.cpu_util {
+        map.insert("cpuUtil".into(), json_num(v));
+    }
+    if let Some(v) = hw.ram_used_mb {
+        map.insert("ramUsedMb".into(), json_num(v));
+    }
+    if let Some(v) = hw.ram_total_mb {
+        map.insert("ramTotalMb".into(), json_num(v));
+    }
+    if let Some(v) = hw.vram_dedicated_mb {
+        map.insert("vramDedicatedMb".into(), json_num(v));
+    }
+    if let Some(v) = hw.vram_shared_mb {
+        map.insert("vramSharedMb".into(), json_num(v));
+    }
+    let prefs = crate::metrics_prefs::get();
+    let p = crate::metrics_prefs::to_json(&prefs);
+    if let Some(v) = p.get("detailLevel") {
+        map.insert("detailLevel".into(), v.clone());
+    }
+    if let Some(v) = p.get("tiles") {
+        map.insert("tiles".into(), v.clone());
+    }
+}
+
+fn json_num(v: f64) -> Value {
+    serde_json::Number::from_f64(v)
+        .map(Value::Number)
+        .unwrap_or(Value::Null)
+}
+
 fn metrics_get_snapshot() -> Result<String, String> {
     try_metrics_snapshot().map(|v| v.to_string())
+}
+
+fn metrics_get_prefs() -> Result<String, String> {
+    Ok(crate::metrics_prefs::to_json(&crate::metrics_prefs::get()).to_string())
+}
+
+fn metrics_set_prefs(args_json: &str) -> Result<String, String> {
+    let p = crate::metrics_prefs::set_from_args(args_json)?;
+    Ok(crate::metrics_prefs::to_json(&p).to_string())
 }
 
 /// Electron-shaped `{ pid, exePath, exeName, windowTitle }` from `GLINT_GAME_PID`.
@@ -296,33 +363,16 @@ fn resolve_process_exe_path(pid: u32) -> Option<String> {
 
 /// Map `MetricsBlock` → JSON matching SDK `MetricsSnapshot` as closely as SHM allows.
 fn metrics_block_to_json(block: &MetricsBlock) -> serde_json::Value {
-    let present = f64::from(block.native_fps);
-    let game = f64::from(block.game_frame_fps);
     let ft = f64::from(block.native_frame_time_ms);
-
-    // Under FG, Present-hook FPS is display rate; game_frame_fps is true native.
-    let (native_fps, generated_fps) = if game > 0.0 && game.is_finite() {
-        let display = if present > 0.0 && present.is_finite() {
-            present
-        } else {
-            game
-        };
-        (game, display)
-    } else if present > 0.0 && present.is_finite() {
-        (present, present)
-    } else {
-        (0.0, 0.0)
+    let fg_on = frame_gen_active(block);
+    let (present, game) = snapshot_fps(block);
+    let (native_fps, generated_fps) = match game {
+        Some(g) => (g, present),
+        None => (present, present),
     };
 
-    let frame_gen_kind = match block.fg_kind {
-        1 => "dlss",
-        2 => "fsr",
-        3 => "xefg",
-        _ => "none",
-    };
-    let frame_gen_active =
-        native_fps > 0.0 && generated_fps > native_fps * 1.08;
-    let frame_gen_ratio = if frame_gen_active {
+    let frame_gen_kind = frame_gen_kind_label(block.fg_kind);
+    let frame_gen_ratio = if fg_on && native_fps > 0.0 {
         generated_fps / native_fps
     } else {
         0.0
@@ -343,7 +393,7 @@ fn metrics_block_to_json(block: &MetricsBlock) -> serde_json::Value {
     serde_json::json!({
         "nativeFps": native_fps,
         "generatedFps": generated_fps,
-        "frameGenActive": frame_gen_active,
+        "frameGenActive": fg_on,
         "frameGenRatio": frame_gen_ratio,
         "frameGenKind": frame_gen_kind,
         "frameSplitSource": "hook",
@@ -428,6 +478,8 @@ mod tests {
             privileged: false,
         };
         assert!(gate(&access, "native.metrics.getSnapshot").is_ok());
+        assert!(gate(&access, "native.metrics.getPrefs").is_ok());
+        assert!(gate(&access, "native.metrics.setPrefs").is_ok());
     }
 
     #[test]
@@ -541,8 +593,7 @@ mod tests {
         }
 
         let body = result.expect("current process pid must resolve");
-        let v: serde_json::Value =
-            serde_json::from_str(&body).expect("process info must be JSON");
+        let v: serde_json::Value = serde_json::from_str(&body).expect("process info must be JSON");
         assert_eq!(v["pid"], pid);
         assert!(v["exePath"].as_str().is_some());
         assert!(v["exeName"].as_str().is_some());
@@ -658,7 +709,10 @@ mod tests {
             "fs.isDirectory",
             &format!(
                 r#"["{}"]"#,
-                plugin_dir.join("data").to_string_lossy().replace('\\', "\\\\")
+                plugin_dir
+                    .join("data")
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
             ),
         );
         let listed = dispatch(
@@ -666,7 +720,10 @@ mod tests {
             "fs.listDir",
             &format!(
                 r#"["{}"]"#,
-                plugin_dir.join("data").to_string_lossy().replace('\\', "\\\\")
+                plugin_dir
+                    .join("data")
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
             ),
         );
         let pick_folder = dispatch("achievements", "fs.pickFolder", "[]");
@@ -881,8 +938,7 @@ mod tests {
     #[test]
     fn achievements_restricted_to_achievements_app() {
         let _lock = ENV_LOCK.lock().unwrap();
-        let err = dispatch("metrics", "achievements.listGames", "[]")
-            .expect_err("must restrict");
+        let err = dispatch("metrics", "achievements.listGames", "[]").expect_err("must restrict");
         assert!(
             err.contains("restricted to the achievements app"),
             "got: {err}"
@@ -926,7 +982,9 @@ mod tests {
             "achievements.detectExe",
             &format!(
                 r#"["{}"]"#,
-                tmp.join("SpinningCube.exe").to_string_lossy().replace('\\', "\\\\")
+                tmp.join("SpinningCube.exe")
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
             ),
         );
         // Create a fake exe dir with steam_api so detect finds markers.
@@ -935,10 +993,7 @@ mod tests {
         std::fs::write(game_dir.join("steam_api64.dll"), b"").unwrap();
         let exe = game_dir.join("SpinningCube.exe");
         std::fs::write(&exe, b"").unwrap();
-        let exe_json = format!(
-            r#"["{}"]"#,
-            exe.to_string_lossy().replace('\\', "\\\\")
-        );
+        let exe_json = format!(r#"["{}"]"#, exe.to_string_lossy().replace('\\', "\\\\"));
         let detect2 = dispatch("achievements", "achievements.detectExe", &exe_json);
         let track = dispatch("achievements", "achievements.trackExe", &exe_json);
         let for_proc = dispatch(
@@ -953,11 +1008,7 @@ mod tests {
         let toast = dispatch("achievements", "achievements.testToast", "[]");
         // openUrl: don't actually open; skip live ShellExecute in CI — call getGuide only.
         // Still assert openUrl is not "unknown".
-        let open = dispatch(
-            "achievements",
-            "achievements.openUrl",
-            r#"["about:blank"]"#,
-        );
+        let open = dispatch("achievements", "achievements.openUrl", r#"["about:blank"]"#);
 
         match prev_apps {
             Some(v) => unsafe { std::env::set_var("GLINT_APPS_DIR", v) },
@@ -1025,8 +1076,8 @@ mod tests {
 
     #[test]
     fn browser_focus_denied_without_privileged() {
-        let err = dispatch("metrics", "browser.focus", "[]")
-            .expect_err("non-privileged must be denied");
+        let err =
+            dispatch("metrics", "browser.focus", "[]").expect_err("non-privileged must be denied");
         assert!(err.contains("privileged"));
         assert!(!err.contains("unknown plugin method"));
     }
@@ -1044,14 +1095,12 @@ mod tests {
             "native.overlay.listenInput",
             "native.overlay.blockInput",
             "native.overlay.setBlockingCursor",
+            "native.overlay.setShellDrag",
             "browser.focus",
             "browser.blur",
         ] {
             let err = dispatch("browser", method, "[]").expect_err(method);
-            assert!(
-                !err.contains("unknown plugin method"),
-                "{method}: {err}"
-            );
+            assert!(!err.contains("unknown plugin method"), "{method}: {err}");
             assert!(
                 err.contains("session method requires host context"),
                 "{method}: {err}"
@@ -1133,10 +1182,7 @@ mod tests {
         .unwrap();
         let sample = tmp.join("achievements").join("data").join("f012.txt");
         std::fs::write(&sample, "hi").unwrap();
-        let sample_arg = format!(
-            r#"["{}"]"#,
-            sample.to_string_lossy().replace('\\', "\\\\")
-        );
+        let sample_arg = format!(r#"["{}"]"#, sample.to_string_lossy().replace('\\', "\\\\"));
         let data_arg = format!(
             r#"["{}"]"#,
             tmp.join("achievements")
@@ -1174,11 +1220,14 @@ mod tests {
         let prev_url = std::env::var_os("GLINT_OPENURL_STUB");
         let prev_offline = std::env::var_os("GLINT_SAVE_MANIFEST_OFFLINE");
         let prev_pid = std::env::var_os("GLINT_GAME_PID");
+        let prev_metrics_prefs = std::env::var_os("GLINT_METRICS_PREFS");
+        let metrics_prefs = tmp.join("metrics-prefs.json");
         unsafe {
             std::env::set_var("GLINT_APPS_DIR", &tmp);
             std::env::set_var("GLINT_FS_PICK_STUB", "cancel");
             std::env::set_var("GLINT_OPENURL_STUB", "1");
             std::env::set_var("GLINT_SAVE_MANIFEST_OFFLINE", "1");
+            std::env::set_var("GLINT_METRICS_PREFS", &metrics_prefs);
             std::env::remove_var("GLINT_GAME_PID");
         }
 
@@ -1188,16 +1237,34 @@ mod tests {
         // (pluginId, method, args) — gates still apply; domain / session Err OK.
         let cases: Vec<(&str, &str, String)> = vec![
             ("metrics", "native.metrics.getSnapshot", "[]".into()),
+            ("metrics", "native.metrics.getPrefs", "[]".into()),
+            (
+                "metrics",
+                "native.metrics.setPrefs",
+                r#"[{"detailLevel":"classic"}]"#.into(),
+            ),
             ("browser", "native.window.getSnapshot", "[]".into()),
             ("browser", "native.window.toggleInteractive", "[]".into()),
-            ("browser", "native.window.setMode", r#"["Interactive"]"#.into()),
+            (
+                "browser",
+                "native.window.setMode",
+                r#"["Interactive"]"#.into(),
+            ),
             ("browser", "native.overlay.getGameWindowId", "[]".into()),
             ("browser", "native.overlay.setPosition", "[0,0,0,0]".into()),
             ("browser", "native.overlay.setAnchor", "[0,0]".into()),
             ("browser", "native.overlay.setMargin", "[0,0,0,0]".into()),
-            ("browser", "native.overlay.listenInput", "[false,false]".into()),
+            (
+                "browser",
+                "native.overlay.listenInput",
+                "[false,false]".into(),
+            ),
             ("browser", "native.overlay.blockInput", "[false]".into()),
-            ("browser", "native.overlay.setBlockingCursor", "[null]".into()),
+            (
+                "browser",
+                "native.overlay.setBlockingCursor",
+                "[null]".into(),
+            ),
             ("achievements", "storage.get", r#"["f012"]"#.into()),
             ("achievements", "storage.set", r#"["f012","v"]"#.into()),
             ("achievements", "storage.remove", r#"["f012"]"#.into()),
@@ -1216,7 +1283,11 @@ mod tests {
                 "db.get",
                 r#"["SELECT id FROM f012 LIMIT 1", []]"#.into(),
             ),
-            ("achievements", "db.all", r#"["SELECT id FROM f012", []]"#.into()),
+            (
+                "achievements",
+                "db.all",
+                r#"["SELECT id FROM f012", []]"#.into(),
+            ),
             ("achievements", "fs.readText", sample_arg.clone()),
             ("achievements", "fs.readBytes", sample_arg.clone()),
             ("achievements", "fs.exists", sample_arg),
@@ -1235,15 +1306,31 @@ mod tests {
             ("achievements", "game.saves.getGameDir", "[]".into()),
             ("achievements", "game.saves.getManifestEntry", "[]".into()),
             ("achievements", "game.saves.getSaveLocations", "[]".into()),
-            ("achievements", "game.saves.findGame", r#"["SpinningCube"]"#.into()),
+            (
+                "achievements",
+                "game.saves.findGame",
+                r#"["SpinningCube"]"#.into(),
+            ),
             ("achievements", "game.saves.updateManifest", "[]".into()),
             ("achievements", "achievements.listGames", "[]".into()),
-            ("achievements", "achievements.listForGame", r#"["missing"]"#.into()),
-            ("achievements", "achievements.detectExe", cube_exe_arg.clone()),
+            (
+                "achievements",
+                "achievements.listForGame",
+                r#"["missing"]"#.into(),
+            ),
+            (
+                "achievements",
+                "achievements.detectExe",
+                cube_exe_arg.clone(),
+            ),
             ("achievements", "achievements.trackExe", cube_exe_arg),
             ("achievements", "achievements.forProcess", for_proc_arg),
             ("achievements", "achievements.getGuide", r#"["gse"]"#.into()),
-            ("achievements", "achievements.openUrl", r#"["about:blank"]"#.into()),
+            (
+                "achievements",
+                "achievements.openUrl",
+                r#"["about:blank"]"#.into(),
+            ),
             ("achievements", "achievements.testToast", "[]".into()),
             ("browser", "overlay.open", "[]".into()),
             ("browser", "overlay.close", "[]".into()),
@@ -1289,6 +1376,10 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("GLINT_GAME_PID", v) },
             None => unsafe { std::env::remove_var("GLINT_GAME_PID") },
         }
+        match prev_metrics_prefs {
+            Some(v) => unsafe { std::env::set_var("GLINT_METRICS_PREFS", v) },
+            None => unsafe { std::env::remove_var("GLINT_METRICS_PREFS") },
+        }
         let _ = std::fs::remove_dir_all(&tmp);
 
         assert!(
@@ -1296,7 +1387,17 @@ mod tests {
             "SC-009 inventory unknown-method failures:\n{}",
             failures.join("\n")
         );
-        assert_eq!(cases.len(), 48, "FR-013 inventory row count drift");
+        assert_eq!(cases.len(), 50, "FR-013 inventory row count drift");
+    }
+
+    #[test]
+    fn etw_only_when_shm_kind_none_and_presentmon_xefg_or_afmf() {
+        assert!(etw_fallback_kind(0, "xefg"));
+        assert!(etw_fallback_kind(0, "afmf"));
+        assert!(!etw_fallback_kind(0, "dlss"));
+        assert!(!etw_fallback_kind(0, "none"));
+        assert!(!etw_fallback_kind(1, "afmf"));
+        assert!(!etw_fallback_kind(2, "xefg"));
     }
 
     #[test]

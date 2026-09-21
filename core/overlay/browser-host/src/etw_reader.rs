@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -28,7 +28,7 @@ pub fn latest_slot() -> Arc<Mutex<Option<Value>>> {
 }
 
 /// Best-effort start: missing binary / no elevation → slot stays empty; SHM
-/// remains the fallback in `plugin_ipc::try_metrics_snapshot`.
+/// remains AFMF/XeSS fallback in `plugin_ipc::try_metrics_snapshot`.
 pub fn start(pid: u32) {
     let slot = latest_slot();
     let Some(bin) = resolve_etw_bin() else {
@@ -63,8 +63,7 @@ async fn run_reader(bin: PathBuf, pid: u32, session_id: String, slot: Arc<Mutex<
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = match cmd.spawn()
-    {
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(err) => {
             warn!(%err, bin = %bin.display(), "failed to spawn ETW metrics");
@@ -95,7 +94,10 @@ async fn run_reader(bin: PathBuf, pid: u32, session_id: String, slot: Arc<Mutex<
     match child.wait().await {
         Ok(status) => {
             if !status.success() {
-                warn!(?status, "ETW metrics process exited (Admin required for ETW)");
+                warn!(
+                    ?status,
+                    "ETW metrics process exited (Admin required for ETW)"
+                );
             }
         }
         Err(err) => warn!(%err, "ETW metrics wait failed"),

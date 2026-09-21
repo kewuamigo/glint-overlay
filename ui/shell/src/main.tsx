@@ -50,7 +50,7 @@ function HostBridge() {
         setMetrics(event.data.payload);
       }
       if (event.data?.type === 'connection') {
-        setConnected(event.data.connected, event.data.pid);
+        setConnected(event.data.connected, event.data.pid, event.data);
       }
       if (event.data?.type === 'chrome') {
         setOverlayOpen(Boolean(event.data.overlayOpen));
